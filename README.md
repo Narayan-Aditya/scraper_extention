@@ -171,7 +171,8 @@ jump to the tab). The panel tells you exactly what happened and what to do:
 | Not logged in (401) | Log into Instagram in that tab, then **Resume**. |
 | Blocked (403) / checkpoint | Clear it in the tab, then **Resume**. |
 | Network dropped | Check your connection, then **Resume**. |
-| Instagram changed its API | All fallbacks failed — the extension needs updating. |
+| Instagram changed its API | All post fallbacks failed — the extension needs updating. |
+| No profile source worked | Every profile source failed (`profile_unavailable`). Check the driven tab: if the profile itself does not render there, it is a block rather than an API change. |
 | Tab closed / browser restarted | **Resume** re-opens the tab and carries on. |
 
 **Resume always continues from the saved cursor**, so nothing is re-downloaded
@@ -252,10 +253,23 @@ account you don't follow gets a profile-only file and the run moves on, and a
   proxies, no spoofed headers, no parallel hidden tabs, no captcha solving.
   Heavy scraping on your own account can still earn you a rate limit or an
   action block — that's why the default delays are conservative.
-- **Instagram's data endpoints are undocumented and change.** If the main one
-  breaks, the extension tries GraphQL, then a DOM scroll harvest (which yields
-  only shortcodes, tagged `"source": "dom"`) before giving up. The endpoint
-  constants live at the top of `content-ig-fetch.js` for easy updating.
+- **Instagram's data endpoints are undocumented and change.** Both halves of the
+  job fall back rather than fail:
+  - *Profile* — `web_profile_info`, retried under each known web app id, then
+    `users/<id>/info/` (the id comes from the page's own embedded JSON, or from
+    the search endpoint), then the rendered page's `og:` tags. Whichever source
+    answered is stamped on the saved profile as `profile_source`, and anything
+    that source cannot supply stays `null` rather than being guessed.
+  - *Posts* — the feed API, then GraphQL, then a DOM scroll harvest (which
+    yields only shortcodes, tagged `"source": "dom"`).
+
+  One known case this covers: Instagram's own serialiser answers
+  `web_profile_info` with **HTTP 400 — "Asset
+  asset://laser.provider/ig_business_category_subvertical has been deleted. You
+  cannot use this schema"** for many business accounts. Nothing is blocked, one
+  response shape is simply broken, so the run now moves to the next source
+  instead of pausing. The endpoint constants live at the top of
+  `content-ig-fetch.js` for easy updating.
 - **Hard cap of 500 pages** (~16k posts) per account as a runaway guard. Hitting
   it is reported in the log and marks the file `complete: false` — it is never a
   silent truncation.
@@ -602,14 +616,15 @@ log. The side panel's own log (last 20 events) is the quicker read for
 | Mode 4 file has an empty `posts` list | It says `complete: false` with `no posts found`. The log names the selectors that were on the page — that is the one line to fix in `POST_SELECTORS`. |
 
 **If Instagram changes its API.** These endpoints are undocumented and rotate.
-When all three fallbacks fail, find the current one yourself:
+When every fallback fails, find the current one yourself:
 
 1. Open a profile in a normal tab with DevTools → **Network** → filter `XHR`.
 2. Scroll the post grid. The request that returns the next batch of posts is the
    one to copy — note its path and its request headers.
 3. Update the constants at the top of `content-ig-fetch.js`
-   (`PROFILE_PATH`, `FEED_PATH`, `GRAPHQL_HASHES`, `FALLBACK_APP_ID`) and reload
-   the extension.
+   (`PROFILE_PATH`, `USER_INFO_PATH`, `TOPSEARCH_PATH`, `FEED_PATH`,
+   `GRAPHQL_HASHES`, `FALLBACK_APP_ID`, `LEGACY_APP_ID`) and reload the
+   extension.
 
 They are deliberately kept together at the top of that file so this stays a
 one-line fix rather than a rewrite.

@@ -784,12 +784,18 @@ async function handleDone(msg) {
 const PROFILE_SKIP_REASONS = new Set(["not_found"]);
 
 const PROFILE_PAUSE_MESSAGES = {
-  login_wall: "Instagram pe login nahi ho — us tab me login karo, phir Resume dabao.",
+  // Instagram returns this for a logged-out tab AND for a temporarily blocked but
+  // logged-in one, with the same body text. The content script appends which of the two
+  // the tab's cookies point to, so the message has to leave room for both.
+  login_wall:
+    "Instagram ne login maanga (401). Us tab me check karo ki tum logged in ho — agar ho, to yeh temporary API block hai, 10-15 min ruk ke Resume karo.",
   forbidden: "Instagram ne request block ki (403). Thoda ruk ke Resume karo.",
   rate_limit: "Rate limit lag gaya — kuch minute ruko, phir Resume.",
   challenge: "Instagram ne verification maanga — tab me clear karke Resume dabao.",
   network: "Network gir gaya — internet check karke Resume dabao.",
   endpoint_shape: "Instagram ne apni API badal di lagti hai — fallback bhi kaam nahi kiya.",
+  profile_unavailable:
+    "Is account ka profile kisi bhi source se nahi mila (web_profile_info, users/info, page DOM — sab try kiye). Tab me profile khulta hai ya nahi, woh check karke Resume dabao.",
   wrong_origin: "Tab instagram.com pe nahi tha — Resume se dobara khol ke try karo.",
 };
 
