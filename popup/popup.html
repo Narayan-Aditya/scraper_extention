@@ -21,6 +21,9 @@
     <button id="modeLinkedinBtn" class="mode-btn" data-mode="linkedin">
       LinkedIn posts <span id="linkedinModeDot" class="mode-dot hidden"></span>
     </button>
+    <button id="modeDiscoverBtn" class="mode-btn" data-mode="discover">
+      IG discovery <span id="discoverModeDot" class="mode-dot hidden"></span>
+    </button>
   </div>
 
   <!-- ============================ Google handle finder ============================ -->
@@ -228,9 +231,97 @@
     </p>
   </section>
 
+  <!-- ========================== Instagram creator discovery ========================== -->
+  <section id="discoverSection">
+    <label for="dcSeeds">Seeds (ek per line)</label>
+    <textarea
+      id="dcSeeds"
+      rows="4"
+      placeholder="mumbai food blogger&#10;@sometravelcreator&#10;#delhifashionblogger"
+    ></textarea>
+    <p class="hint">
+      Teen tarah ki line chalti hai — <b>@handle</b> ya profile URL = us account jaise
+      accounts dhoondho, <b>#tag</b> = us hashtag ke creators, aur <b>baaki koi bhi text</b>
+      = Instagram search. Bina @ ke likha word hamesha search term mana jayega.
+    </p>
+
+    <label for="dcExcludes">Exclude handles (optional, ek per line)</label>
+    <textarea id="dcExcludes" rows="2" placeholder="@pehle_se_export_kiya"></textarea>
+
+    <div class="row">
+      <label for="dcDepth">Depth (0 = sirf seeds)</label>
+      <input id="dcDepth" type="number" min="0" max="3" value="2" />
+    </div>
+    <div class="row">
+      <label for="dcMaxCandidates">Max candidates</label>
+      <input id="dcMaxCandidates" type="number" min="50" max="5000" step="50" value="500" />
+    </div>
+    <div class="row">
+      <label for="dcMinFollowers">Min followers</label>
+      <input id="dcMinFollowers" type="number" min="0" step="500" value="1000" />
+    </div>
+    <div class="row">
+      <label for="dcMaxFollowers">Max followers</label>
+      <input id="dcMaxFollowers" type="number" min="1000" step="10000" value="1000000" />
+    </div>
+    <div class="row">
+      <label for="dcStepDelay">Delay between requests (s)</label>
+      <input id="dcStepDelay" type="number" min="2" value="4" />
+    </div>
+    <div class="row">
+      <label for="dcBatchDelay">Delay between batches (s)</label>
+      <input id="dcBatchDelay" type="number" min="5" value="10" />
+    </div>
+    <div class="row check">
+      <input id="dcEnrich" type="checkbox" checked />
+      <label for="dcEnrich">Har candidate ki detail bhi nikaalo (slow, par score sahi aata hai)</label>
+    </div>
+    <p class="hint">
+      Detail off rakhoge to run tez hoga par zyadatar candidate ka follower count nahi
+      milega — score tab <code>?</code> dikhega, matlab "pata nahi", "bekaar" nahi.
+    </p>
+    <p id="dcDelayWarning" class="warning hidden">Kam delay = jaldi rate-limit. 4s+ theek hai.</p>
+
+    <div class="actions">
+      <button id="dcStartBtn">Start</button>
+      <button id="dcStopBtn" class="hidden">Stop run</button>
+    </div>
+
+    <div id="dcPauseBanner" class="banner hidden">
+      <p>Run pause ho gaya hai — neeche wajah dekho, phir Resume dabao.</p>
+      <p id="dcPauseDetail" class="detail"></p>
+      <button id="dcResumeBtn">Resume</button>
+    </div>
+
+    <div class="status">
+      <p id="dcStatusLine">Idle</p>
+      <p id="dcTotalsLine">Tasks: 0/0 &middot; candidates: 0 &middot; creator-jaise: 0</p>
+    </div>
+
+    <ul id="dcTop" class="completed hidden"></ul>
+    <ul id="dcLog"></ul>
+
+    <div class="actions">
+      <button id="dcDownloadBtn" disabled>Download JSON</button>
+      <button id="dcCopyBtn" disabled>Handles copy</button>
+      <button id="dcResetBtn" class="danger">Reset</button>
+    </div>
+    <p class="hint">
+      Run poora hote hi <code>ig-discovery_&lt;date&gt;.json</code> apne aap download ho jata
+      hai. <b>Handles copy</b> se sirf chune hue handle clipboard me aa jate hain — unhe
+      <b>Instagram profiles</b> tab me paste karke poora profile+posts export chala lo.
+    </p>
+    <p class="hint">
+      Yeh mode Instagram ke apne suggestion endpoints use karta hai, jo undocumented hain
+      aur badalte rehte hain. Koi source jawab dena band kare to woh apne aap band ho jata
+      hai aur baaki source chalte rehte hain — log me dikh jayega.
+    </p>
+  </section>
+
   <script src="popup.js"></script>
   <script src="popup-profiles.js"></script>
   <script src="popup-youtube.js"></script>
   <script src="popup-linkedin.js"></script>
+  <script src="popup-discover.js"></script>
 </body>
 </html>

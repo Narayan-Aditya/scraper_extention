@@ -102,7 +102,8 @@ button {
 #log,
 #igLog,
 #ytLog,
-#liLog {
+#liLog,
+#dcLog {
   max-height: 120px;
   overflow-y: auto;
   border: 1px solid #ddd;
@@ -116,7 +117,8 @@ button {
 #log li,
 #igLog li,
 #ytLog li,
-#liLog li {
+#liLog li,
+#dcLog li {
   padding: 2px 0;
   border-bottom: 1px solid #f1f1f1;
 }
@@ -124,14 +126,16 @@ button {
 #log li:last-child,
 #igLog li:last-child,
 #ytLog li:last-child,
-#liLog li:last-child {
+#liLog li:last-child,
+#dcLog li:last-child {
   border-bottom: none;
 }
 
 #downloadBtn,
 #igDownloadBtn,
 #ytDownloadBtn,
-#liDownloadBtn {
+#liDownloadBtn,
+#dcDownloadBtn {
   flex: 1;
 }
 
@@ -195,18 +199,20 @@ button {
 }
 
 /* Only the active mode's section is in the document flow. Written as hide-all +
-   show-one so a fourth mode never needs a new pair of rules per combination. */
+   show-one so a fifth mode never needs a new pair of rules per combination. */
 #googleSection,
 #profileSection,
 #youtubeSection,
-#linkedinSection {
+#linkedinSection,
+#discoverSection {
   display: none;
 }
 
 body.mode-google #googleSection,
 body.mode-profiles #profileSection,
 body.mode-youtube #youtubeSection,
-body.mode-linkedin #linkedinSection {
+body.mode-linkedin #linkedinSection,
+body.mode-discover #discoverSection {
   display: block;
 }
 

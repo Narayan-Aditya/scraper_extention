@@ -1,6 +1,6 @@
 # Insta Handle Finder
 
-Four tools in one side panel, switched with the tabs at the top:
+Five tools in one side panel, switched with the tabs at the top:
 
 | Mode | What it does |
 |---|---|
@@ -8,10 +8,16 @@ Four tools in one side panel, switched with the tabs at the top:
 | **Instagram profiles** | Takes profile URLs/handles and exports each account's full profile + every post to `<handle>.json`. |
 | **YouTube channels** | Takes channel URLs/@handles and exports each channel's full profile + every video to `<handle>.json`. |
 | **LinkedIn posts** | Takes a LinkedIn search-results URL and exports every post the search returns to `linkedin-<keywords>.json`. |
+| **IG discovery** | Walks Instagram's *own* suggestion graph from a seed creator/phrase/hashtag and produces a scored list of creator handles. |
 
 They are independent — separate runs, separate tabs, separate saved state — so
-the natural workflow is to find handles in the first mode and feed them into the
+the natural workflow is to find handles (mode 1 or mode 5) and feed them into the
 second.
+
+**Which handle-finder to use.** Mode 1 asks Google, which carries no creator
+signal at all and dedupes `site:` results hard — it finds Instagram accounts, not
+specifically creators. Mode 5 asks Instagram, which knows exactly which accounts
+are similar to a creator you already like. For finding creators, start with mode 5.
 
 ## Setup
 
@@ -593,10 +599,177 @@ adds what it did not already have.
 
 ---
 
+## Mode 5 — Instagram discovery (creator handles)
+
+Mode 1 finds Instagram accounts by asking Google. That works badly for creators:
+a `site:instagram.com "<city>"` query carries no creator signal, most of the
+results are `/p/` and `/reel/` links that get thrown away, and Google collapses
+`site:` results long before you have a useful list.
+
+This mode asks Instagram instead. Given one creator you already like, Instagram
+itself will tell you who is similar — that is a breadth-first walk of its own
+suggestion graph, and it is what this mode does.
+
+Output is a **candidate list**, not profiles. The profile exporter (mode 2)
+already does that job properly; discovery hands it a ranked queue.
+
+### How to use it
+
+1. Log into Instagram in Chrome, as normal.
+2. **IG discovery** tab → put seeds in the box, one per line. Three forms, and
+   the rule between them is deliberately unambiguous:
+
+   | Seed | Means |
+   |---|---|
+   | `@somecreator` or `instagram.com/somecreator` | walk that account's similar-accounts graph |
+   | `#delhifashionblogger` | harvest the accounts posting under that hashtag |
+   | `mumbai food blogger` | Instagram search for that phrase |
+
+   A bare word with no prefix is always a **search term**, never a handle —
+   `mumbaifoodblogger` is far more often a phrase somebody typed than an account
+   they meant.
+3. Set the follower band you actually want (default 1K–1M, the micro/mid
+   influencer window), depth, and the caps. **Start**.
+4. When it finishes, `ig-discovery_<date>.json` downloads by itself. **Handles
+   copy** puts just the kept handles on the clipboard — paste them into the
+   **Instagram profiles** tab to export them properly.
+
+Depth 0 means "only the seeds". Depth 2 (the default) means seeds → their similar
+accounts → *their* similar accounts. Each level multiplies the request count, so
+3 is the hard ceiling.
+
+### The detail switch
+
+Discovery listings answer thin: usually a handle, a name, private/verified, and
+often nothing else. With **detail** on (the default), every kept candidate gets
+one extra request that fills in follower count, category and bio — the three
+signals the score leans on hardest. It roughly doubles the run length and is
+capped at 400 candidates, reported when it bites.
+
+With it off the run is much faster, and most scores come back `?`. That is not a
+low score — see below.
+
+### How a candidate is scored
+
+The score is a percentage of the evidence that **actually existed**, not of every
+signal that could have existed:
+
+| Signal | Weight | Best case |
+|---|---|---|
+| Follower band | 35 | inside the band you set |
+| Private account | 20 | public |
+| Category | 20 | matches creator words (creator, blogger, artist, photographer…) |
+| Follower/following ratio | 15 | ≥ 3 |
+| Bio intent | 15 | collab wording or a contact email |
+| Posts count | 10 | 20+ |
+| Verified | 10 | verified (unverified keeps most of the credit — it is normal for a micro creator) |
+| Bio link | 10 | present |
+
+**A signal the source did not supply is left out of the sum entirely** — it
+neither helps nor hurts. So a candidate nobody could measure scores `null`,
+shown in the panel as `?`, and it is kept rather than dropped: a terse listing is
+not evidence against an account. Scoring a missing follower count as zero would
+bury every account a listing happened to be short about; scoring it as average
+would promote them over accounts that were actually measured. Neither is honest.
+
+Private accounts are the one hard drop — nothing about them can be exported later
+— but they are still saved in the file, flagged, rather than being thrown away.
+
+### Output format — `ig-discovery_<date>.json`
+
+```jsonc
+{
+  "generated_at": "2026-08-31T09:12:03.114Z",
+  "complete": true,
+  "incomplete_reason": null,
+  "seeds": ["mumbai food blogger", "@somecreator"],
+  "settings": {
+    "max_depth": 2,
+    "max_candidates": 500,
+    "follower_band": [1000, 1000000],
+    "keep_threshold": 50,
+    "chaining_enabled": true,
+    "enrich_enabled": true,
+    "excluded_handles": 0
+  },
+  "runaway_guard_hit": null,          // or "max_candidates" / "max_tasks"
+  "sources_disabled": [],             // sources that stopped answering mid-run
+  "totals": { "tasksDone": 41, "tasksPlanned": 41, "candidates": 380, "kept": 233 },
+  "candidates": [
+    {
+      "handle": "somefoodie",
+      "profile_url": "https://www.instagram.com/somefoodie/",
+      "user_id": "1234567890",
+      "full_name": "Some Foodie",
+      "biography": "DM for collabs",
+      "followers": 48200,
+      "following": 310,
+      "posts_count": 412,
+      "is_private": false,
+      "is_verified": false,
+      "is_business": true,
+      "category": "Digital creator",
+      "external_url": "https://linktr.ee/somefoodie",
+      "score": 86,                    // null means "not enough evidence", never 0
+      "score_known_weight": 125,      // how much evidence that score is based on
+      "signals": { "followers": "in_band", "ratio": "high", "category": "creator" },
+      "keep": true,
+      "enriched": true,
+      "found_via": "@somecreator",    // which seed/step surfaced it
+      "found_kind": "chain",
+      "depth": 1
+    }
+  ],
+  "kept_handles": ["somefoodie", "..."]   // paste-ready for mode 2
+}
+```
+
+`candidates` is sorted best-first. Unrated candidates sort below rated ones —
+they are unmeasured, not rejected.
+
+### When it pauses
+
+Same stance as every other mode: a wall pauses the run, it is never retried
+around. **Resume** repeats exactly the tasks that had not reported yet and none
+of the ones that had.
+
+| Reason | What to do |
+|---|---|
+| Not logged in (401) | Check the tab. If you *are* logged in, this is a temporary API block — wait 10-15 min, then **Resume**. |
+| Rate limit (429) | Wait out the cool-down the panel counts down, then **Resume**. |
+| Blocked (403) / checkpoint | Clear it in the tab, then **Resume**. |
+| Tab closed | **Resume** re-opens it and carries on from the same frontier. |
+
+### Good to know / limits
+
+- **The discovery endpoints are undocumented and unverified.** Only the search
+  endpoint is one this extension already used elsewhere. If a source starts
+  answering nonsense it is switched off **for that run** after two consecutive
+  structural failures and the remaining sources carry on — the log and the output
+  file both name what was disabled. A dead endpoint is never re-tried once per
+  frontier node; that would be exactly the request storm this project refuses to
+  make. The constants live together at the top of `content-ig-discover.js`.
+- **A wall is not a dead source.** A login/rate-limit/checkpoint failure stops the
+  whole batch instead of disabling one source, because every source would hit the
+  same wall.
+- **Runaway guards**: 500 candidates by default (5000 max), 2000 frontier tasks,
+  400 enrichment requests. All three are reported in the log and written into the
+  file as `runaway_guard_hit` — never a silent truncation.
+- **Only plausible creators grow the frontier.** A candidate that scores below the
+  keep threshold, or is private, is stored but never chained from — otherwise one
+  bad seed drags the whole walk into a neighbourhood you did not ask for.
+- **One tab, parked on instagram.com.** Discovery never needs a particular profile
+  open — every source is an API call the app itself makes while you browse — so
+  there is no per-candidate navigation.
+- **Nothing is auto-fed into mode 2.** Copy the handles across yourself; a heavy
+  profile crawl should not start without you watching it.
+
+---
+
 ## Troubleshooting
 
 **Where to look first.** `chrome://extensions` → the extension's card →
-**Service worker** → *Inspect*. That console is where all four background scripts
+**Service worker** → *Inspect*. That console is where all five background scripts
 log. The side panel's own log (last 20 events) is the quicker read for
 "what just happened".
 
@@ -666,6 +839,8 @@ the channel page does not carry them.
 | `content-yt-fetch.js` | Injected into the YouTube tab — reads the channel profile and pages through every video |
 | `background-linkedin.js` | Service worker — orchestrates the LinkedIn search queue, persists batches, writes the files |
 | `content-li-fetch.js` | Injected into the LinkedIn tab — scrolls the search results and reads every post off the page |
+| `background-discover.js` | Service worker — owns the discovery frontier (BFS, dedupe, caps) and the creator scorer, writes the file |
+| `content-ig-discover.js` | Injected into the Instagram tab — runs a batch of discovery questions and reports candidates |
 | `offscreen.html` / `offscreen.js` | Turns the collected JSON into a downloadable blob URL (a service worker can't) |
 | `popup/` | The side panel UI (HTML/CSS/JS), loaded via `side_panel.default_path` |
 | `icons/` | Toolbar/notification icons |
