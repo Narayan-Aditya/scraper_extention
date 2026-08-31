@@ -43,6 +43,11 @@ function defaultProfileState() {
     tabId: null,
     pageDelaySec: 3,
     accountDelaySec: 8,
+    postLimit: null, // null = MAX: crawl every post of every account
+    downloadFolder: "", // "" = straight into Downloads
+    // Set when another runner (the brief orchestrator) started this run, so it can tell
+    // its own sub-run apart from one the user kicked off by hand in the panel.
+    owner: null,
     pendingInject: false,
     injectToken: 0,
     current: defaultCurrentAccount(""),
@@ -144,6 +149,23 @@ function normalizeProfileHandle(raw) {
 
 function profileUrlFor(handle) {
   return "https://www.instagram.com/" + encodeURIComponent(handle) + "/";
+}
+
+// One campaign's files belong together. Chrome creates the folder under Downloads on
+// its own; the sanitising is what keeps a folder name out of the parent directories.
+function safeDownloadFolder(name) {
+  const cleaned = String(name || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^[.-]+/, "")
+    .replace(/[.-]+$/, "")
+    .slice(0, 80);
+  return cleaned;
+}
+
+function withDownloadFolder(folder, filename) {
+  const safe = safeDownloadFolder(folder);
+  return safe ? safe + "/" + filename : filename;
 }
 
 // Strips anything that could escape the download directory or create a hidden file.
@@ -290,7 +312,12 @@ chrome.downloads.onChanged.addListener((delta) => {
 
 async function buildAccountJson(state, options) {
   const current = state.current;
-  const posts = await readPostShards(current.shardKeys);
+  const collected = await readPostShards(current.shardKeys);
+  const limit = state.postLimit || null;
+  // Belt and braces: the content loop already stops at the budget and handlePage trims
+  // overshoot, but shard dedupe happens here — so this is the only place that can see the
+  // final count. Never hand back more posts than the user asked for.
+  const posts = limit ? collected.slice(0, limit) : collected;
   const complete = !!(options && options.complete);
 
   const payload = {
@@ -302,6 +329,7 @@ async function buildAccountJson(state, options) {
     incomplete_reason: complete ? null : (options && options.reason) || "incomplete",
     profile: current.profile,
     posts_count_reported: current.profile ? current.profile.posts_count : null,
+    post_limit: limit,
     posts_collected: posts.length,
     posts,
   };
@@ -316,7 +344,7 @@ async function saveAccountFile(state, options) {
   const handle = state.current.handle;
   try {
     const json = await buildAccountJson(state, options);
-    await downloadJson(safeHandleFilename(handle), json);
+    await downloadJson(withDownloadFolder(state.downloadFolder, safeHandleFilename(handle)), json);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e && e.message ? e.message : String(e) };
@@ -459,6 +487,9 @@ async function injectProfileFetcher(tabId, state) {
     seenPostIds: current.recentPostIds || [],
     pagesFetched: current.pagesFetched || 0,
     pageDelayMs: Math.max(2, state.pageDelaySec) * 1000,
+    postLimit: state.postLimit || null,
+    // What this account has already banked, so a resume spends only what is left.
+    postsSoFar: current.postsCount || 0,
     runToken: state.injectToken,
   };
 
@@ -513,6 +544,14 @@ async function signalContentStop(tabId) {
 
 // --------------------------------------------------------------------- panel commands
 
+// Mirrors parsePostLimit() in popup-profiles.js. Anything that is not a usable count —
+// including the panel's "MAX" — becomes null, which means "no limit".
+function normalizePostLimit(raw) {
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 1) return null;
+  return Math.floor(value);
+}
+
 async function startProfileRun(msg) {
   const accounts = [];
   const seen = new Set();
@@ -544,6 +583,7 @@ async function startProfileRun(msg) {
 
   const pageDelaySec = Math.max(2, Number(msg.pageDelaySec) || 3);
   const accountDelaySec = Math.max(3, Number(msg.accountDelaySec) || 8);
+  const postLimit = normalizePostLimit(msg.postLimit);
 
   const fresh = {
     ...defaultProfileState(),
@@ -552,10 +592,16 @@ async function startProfileRun(msg) {
     accounts,
     pageDelaySec,
     accountDelaySec,
+    postLimit,
+    downloadFolder: safeDownloadFolder(msg.downloadFolder),
+    owner: msg.owner || null,
     current: defaultCurrentAccount(accounts[0]),
     totals: { accounts: accounts.length, accountsDone: 0, postsFetched: 0 },
     lastEvent:
-      "Start: @" + accounts[0] + (skipped ? " (" + skipped + " line skip ki — sirf profile URL chalega)" : ""),
+      "Start: @" +
+      accounts[0] +
+      (postLimit ? " (har account se " + postLimit + " posts)" : " (har account ke saare posts)") +
+      (skipped ? " (" + skipped + " line skip ki — sirf profile URL chalega)" : ""),
     updatedAt: Date.now(),
   };
   fresh.log = [fresh.lastEvent];
@@ -686,7 +732,13 @@ async function handlePage(msg) {
   const state = await getProfileState();
   if (!isLiveReport(state, msg)) return { ok: false, abort: true };
 
-  const posts = Array.isArray(msg.posts) ? msg.posts : [];
+  const limit = state.postLimit || null;
+  let posts = Array.isArray(msg.posts) ? msg.posts : [];
+  if (limit) {
+    // A page that straddles the budget is kept only up to it — the content loop stops
+    // itself too, this just makes sure a straddling page cannot overshoot.
+    posts = posts.slice(0, Math.max(0, limit - state.current.postsCount));
+  }
   const current = { ...state.current };
 
   if (posts.length) {
@@ -744,6 +796,7 @@ async function handleDone(msg) {
   if (!isLiveReport(state, msg)) return { ok: false, abort: true };
 
   const capped = !!msg.capped;
+  const limited = !!msg.limited;
   const current = { ...state.current, capped };
   const withFlag = await setProfileState({
     current,
@@ -754,7 +807,11 @@ async function handleDone(msg) {
       " complete — " +
       current.postsCount +
       " posts" +
-      (capped ? " (page cap lag gaya, poora nahi hai)" : ""),
+      (capped
+        ? " (page cap lag gaya, poora nahi hai)"
+        : limited
+        ? " (aapki " + state.postLimit + " post limit tak)"
+        : ""),
   });
 
   const result = await saveAccountFile(withFlag, {

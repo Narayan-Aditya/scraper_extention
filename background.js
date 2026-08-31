@@ -13,6 +13,9 @@ importScripts("background-profiles.js");
 importScripts("background-youtube.js");
 importScripts("background-linkedin.js");
 importScripts("background-discover.js");
+// Last on purpose: the brief runner drives the discovery and profile runners, so both
+// have to exist in this scope before it is defined.
+importScripts("background-brief.js");
 
 const ALARM_NAME = "nextPage";
 

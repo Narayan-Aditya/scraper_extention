@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Insta Handle Finder (Google Search)",
   "version": "1.2.0",
-  "description": "Multi-city site:instagram.com Google search for public handles, Instagram creator discovery via Instagram's own suggestion graph, plus full Instagram profile+posts, YouTube channel+videos and LinkedIn search-post exporters. Pauses on CAPTCHA/rate-limit; never evades.",
+  "description": "Campaign brief to creator folder in one run, multi-city site:instagram.com Google search for public handles, Instagram creator discovery via Instagram's own suggestion graph, plus full Instagram profile+posts, YouTube channel+videos and LinkedIn search-post exporters. Pauses on CAPTCHA/rate-limit; never evades.",
   "permissions": [
     "tabs",
     "scripting",

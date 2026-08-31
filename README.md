@@ -1,6 +1,6 @@
 # Insta Handle Finder
 
-Five tools in one side panel, switched with the tabs at the top:
+Six tools in one side panel, switched with the tabs at the top:
 
 | Mode | What it does |
 |---|---|
@@ -9,10 +9,11 @@ Five tools in one side panel, switched with the tabs at the top:
 | **YouTube channels** | Takes channel URLs/@handles and exports each channel's full profile + every video to `<handle>.json`. |
 | **LinkedIn posts** | Takes a LinkedIn search-results URL and exports every post the search returns to `linkedin-<keywords>.json`. |
 | **IG discovery** | Walks Instagram's *own* suggestion graph from a seed creator/phrase/hashtag and produces a scored list of creator handles. |
+| **Brief → creators** | Reads a campaign brief, runs discovery from it, and exports the top N creators (profile + N posts each) into one download folder. |
 
-They are independent — separate runs, separate tabs, separate saved state — so
-the natural workflow is to find handles (mode 1 or mode 5) and feed them into the
-second.
+Modes 1-5 are independent — separate runs, separate tabs, separate saved state —
+so the natural workflow is to find handles (mode 1 or mode 5) and feed them into
+the second. Mode 6 is that workflow already wired together for one brief.
 
 **Which handle-finder to use.** Mode 1 asks Google, which carries no creator
 signal at all and dedupes `site:` results hard — it finds Instagram accounts, not
@@ -143,9 +144,12 @@ reversible — **download your JSON before resetting** if you want to keep it.
 ## Mode 2 — Instagram profiles (full profile + all posts)
 
 Paste one or more **public Instagram profile URLs or handles** and it opens each
-one in a tab, pulls the profile plus every post by paging to the end, and
-downloads one JSON file per account named after the handle (`natgeo.json`).
-With several accounts, the files arrive one by one as each account finishes.
+one in a tab, pulls the profile plus its posts, and downloads one JSON file per
+account named after the handle (`natgeo.json`). With several accounts, the files
+arrive one by one as each account finishes.
+
+**Posts per account** decides how far it goes: a number stops at that many most
+recent posts, `MAX` pages to the end of the account.
 
 ### How to use it
 
@@ -158,12 +162,21 @@ With several accounts, the files arrive one by one as each account finishes.
    `natgeo`, and URLs with tracking junk like `?igsh=...`. Post, reel, story,
    explore and `/tagged/` links are rejected — you'll be told how many lines were
    skipped before anything starts.
-4. **Delay between pages** (default 3s, min 2) and **Delay between accounts**
+4. **Posts per account** (default `MAX`). Type a number — `50` — to stop after
+   the 50 most recent posts of *every* handle in the list, or leave it as `MAX`
+   to page to the end. A number is a real stopping point, not a filter applied
+   afterwards: once the budget is spent, no further page is requested. A file
+   that stopped at your number is still `"complete": true` — you asked for that
+   many and got them — and records the budget as `post_limit`.
+5. **Delay between pages** (default 3s, min 2) and **Delay between accounts**
    (default 8s, min 3). Lower = faster and more likely to hit a rate limit.
-5. Click **Start**. Watch the live status: which account, which page, how many
+6. Click **Start**. Watch the live status: which account, which page, how many
    posts so far, and a running list of finished accounts.
-6. Each account's file downloads automatically the moment it completes — the
+7. Each account's file downloads automatically the moment it completes — the
    side panel does not have to stay open.
+
+A **Resume** picks the budget up where it left off — it counts what the account
+has already banked, so a run stopped at 30 of 50 asks for 20 more, not 50.
 
 ### When it pauses
 
@@ -766,6 +779,116 @@ of the ones that had.
 
 ---
 
+## Mode 6 — Brief → creators (one brief, one folder)
+
+Modes 5 and 2 are the two halves of the job an influencer-marketing brief
+actually asks for: find creators who fit it, then pull their recent work so
+somebody can judge them. This mode wires those halves together and adds the two
+pieces in between — reading the brief, and picking the N it hands over.
+
+Paste the brief, say how many creators you want, press **Start**. It discovers,
+selects, exports, and everything lands in one folder under Downloads.
+
+### How to use it
+
+1. Log into instagram.com in the same Chrome profile.
+2. **Brief → creators** tab → paste the brief into the box, or pick a
+   `.txt` / `.md` / `.csv` / `.json` file. **PDF and Word are not read** — copy
+   the text out and paste it. There is no document parser here, and one that
+   silently produced half a brief would be worse than none.
+3. **Brief padho**. It reads the brief and shows what it understood — brand,
+   niches, cities, follower band, creator count, languages, brand handles — plus
+   the **seeds** it built from that.
+4. **Check the seeds.** They are an ordinary editable textarea and they are the
+   whole input to discovery. Delete the ones that miss the point, add your own.
+5. Set **Kitne creator chahiye** (N) and **Posts per creator** (default 10, or
+   `MAX`), then **Start** and confirm the size of the crawl.
+
+### How the brief is read
+
+There is no LLM involved. The reader uses the structure real briefs already have
+— `Niche / Genre:`, `Tier:`, `Location:`, `Number of Creators:` — and reads each
+field out of *its own section* rather than the whole document. That scoping is
+what stops the word "Unboxing" in a deliverables list from turning a gifting
+campaign into a tech-creator campaign. A brief with no headings still works: each
+field falls back to a whole-document scan, and the panel says which happened.
+
+| Field | How |
+|---|---|
+| Niches | Keyword vocabulary (wedding, couple, family, fashion, beauty, lifestyle, gifting, food, travel, …) matched inside the niche section |
+| Cities | ~50 Indian cities with aliases — Bangalore/Bengaluru, Bombay/Mumbai, Delhi NCR/Delhi — kept **in the order the brief lists them**, because the seed budget is spent front-to-back |
+| Follower band | Explicit numbers win (`100K to 500K`); otherwise the tier word's default band. A range on a line that mentions neither followers nor a K/M suffix is ignored, so "Week 1 to 4" is not a band |
+| Creator count | The first `N … creators` in the creator-count section |
+| Brand handles | `@mentions` and `instagram.com/…` links — added to discovery's **exclude** list, since the brand's own account is a lead for nobody |
+
+Seeds are one per niche (`wedding content creator`), then city × niche pairs
+round-robin so the first seeds cover many cities *and* many niches
+(`delhi wedding`, `mumbai couple`, `bengaluru family`, …), then any hashtags the
+brief contained. Capped at 24 by default.
+
+### How the N are picked
+
+From the discovery candidates, **follower band first, then score**:
+
+1. **In band** (measured, inside the band the brief asked for)
+2. **Unmeasured** — no follower count came back. Not evidence of being out of
+   band, and not evidence of being in it
+3. **Out of band**
+
+Ties break on discovery's keep flag, then its score, then follower count. An
+account measured at 5K with a 95 score loses to one measured at 150K with 86,
+because the brief asked for a range and that is the request being served.
+
+**Private accounts are never picked** — their posts cannot be exported at all —
+but they stay in the shortlist file, flagged, for you to see.
+
+**Gender is not selected for.** Briefs routinely ask for a male/female split;
+a profile does not reliably state gender and guessing from a name or a photo is
+not something this tool will do. If the brief asks for one, the panel says so and
+the ranked shortlist is there for you to pick from by hand. The same goes for
+"brand suitability" and content quality — the brief's own last line asks for
+human judgement, and this mode hands you the material for it rather than
+pretending to have made the call.
+
+### What lands in the folder
+
+`Downloads/brief_<brand>_<date>/`:
+
+| File | What |
+|---|---|
+| `_brief-plan.json` | The brief text, everything parsed out of it, and the exact discovery settings. Written **before** the first request, so a run that dies on a wall still leaves a record of what it was going to do |
+| `ig-discovery_<date>.json` | Discovery's own full candidate file (mode 5's format) |
+| `_shortlist.json` | Every candidate, ranked, with `band_fit`, plus which N were picked |
+| `<handle>.json` | One per picked creator — profile + the posts, in mode 2's format |
+| `_summary.json` | What actually happened per creator: file name, posts exported, complete or not, and why |
+
+### When it pauses
+
+It runs two sub-runs and does not own any of the crawling itself, so a wall shows
+up exactly where it did before: discovery pauses, or the export pauses, and this
+mode mirrors that up with the same reason and one **Resume** that forwards to
+whichever half was running. Everything already downloaded stays downloaded.
+
+One extra case is its own: if the discovery or profile run it is waiting on gets
+**replaced by a manual run** from another tab, the brief run pauses and says so
+rather than quietly adopting somebody else's results. Sub-runs it starts are
+tagged; an untagged one is not its own.
+
+### Good to know / limits
+
+- **It refuses to start on top of a live run** in the IG discovery or Instagram
+  profiles tabs — both are single-tab runners, and starting over one would throw
+  away what you already had going.
+- **Cost is roughly `seeds + candidates + N` Instagram requests**, at the delay
+  you set. The confirm dialog before Start states the shape of it. Discovery's
+  own runaway guards (500 candidates, 2000 tasks) still apply.
+- **The parser is a first draft, never a black box.** Everything it extracted is
+  visible and every seed is editable before anything runs.
+- **Instagram only.** If the brief is a YouTube brief the panel warns you; the
+  YouTube exporter is mode 3 and is not wired into this.
+
+---
+
 ## Troubleshooting
 
 **Where to look first.** `chrome://extensions` → the extension's card →
@@ -841,6 +964,8 @@ the channel page does not carry them.
 | `content-li-fetch.js` | Injected into the LinkedIn tab — scrolls the search results and reads every post off the page |
 | `background-discover.js` | Service worker — owns the discovery frontier (BFS, dedupe, caps) and the creator scorer, writes the file |
 | `content-ig-discover.js` | Injected into the Instagram tab — runs a batch of discovery questions and reports candidates |
+| `background-brief.js` | Service worker — sequences discovery → selection → export for one brief, writes the plan/shortlist/summary files |
+| `popup/brief-parse.js` | Pure brief reader (cities, niches, tier, counts → seeds). No DOM, no chrome APIs, testable under Node |
 | `offscreen.html` / `offscreen.js` | Turns the collected JSON into a downloadable blob URL (a service worker can't) |
 | `popup/` | The side panel UI (HTML/CSS/JS), loaded via `side_panel.default_path` |
 | `icons/` | Toolbar/notification icons |

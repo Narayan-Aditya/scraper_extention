@@ -8,6 +8,7 @@
   const accountsEl = document.getElementById("igAccounts");
   const pageDelayEl = document.getElementById("igPageDelay");
   const accountDelayEl = document.getElementById("igAccountDelay");
+  const postLimitEl = document.getElementById("igPostLimit");
   const delayWarningEl = document.getElementById("igDelayWarning");
   const startBtn = document.getElementById("igStartBtn");
   const stopBtn = document.getElementById("igStopBtn");
@@ -23,13 +24,14 @@
 
   // The mode switcher is shared UI and lives here, because this file was the one that
   // introduced it. Each feature still renders only its own dot.
-  const MODES = ["google", "profiles", "youtube", "linkedin", "discover"];
+  const MODES = ["google", "profiles", "youtube", "linkedin", "discover", "brief"];
   const modeButtons = {
     google: document.getElementById("modeGoogleBtn"),
     profiles: document.getElementById("modeProfilesBtn"),
     youtube: document.getElementById("modeYoutubeBtn"),
     linkedin: document.getElementById("modeLinkedinBtn"),
     discover: document.getElementById("modeDiscoverBtn"),
+    brief: document.getElementById("modeBriefBtn"),
   };
   const googleDot = document.getElementById("googleModeDot");
   const profileDot = document.getElementById("profileModeDot");
@@ -100,6 +102,17 @@
       accounts.push(handle);
     }
     return { accounts, skipped };
+  }
+
+  // Per-account post budget. "MAX" (or an empty box) means the whole account. Returns
+  // undefined for anything we cannot honour, so the caller refuses to start instead of
+  // silently crawling everything when the user meant a small number.
+  function parsePostLimit(raw) {
+    const value = String(raw == null ? "" : raw).trim();
+    if (!value || value.toUpperCase() === "MAX") return null; // null = no limit
+    if (!/^\d+$/.test(value)) return undefined;
+    const count = Number(value);
+    return count >= 1 ? count : undefined;
   }
 
   // ------------------------------------------------------------------------- rendering
@@ -204,7 +217,8 @@
       "/" +
       (state.accounts ? state.accounts.length : 0) +
       " · posts: " +
-      (state.totals ? state.totals.postsFetched : 0);
+      (state.totals ? state.totals.postsFetched : 0) +
+      (state.postLimit ? " · limit " + state.postLimit + "/account" : "");
 
     renderCompleted(state);
 
@@ -227,6 +241,7 @@
     if (!settingsEdited) {
       if (state.pageDelaySec) pageDelayEl.value = state.pageDelaySec;
       if (state.accountDelaySec) accountDelayEl.value = state.accountDelaySec;
+      postLimitEl.value = state.postLimit ? String(state.postLimit) : "MAX";
     }
 
     renderModeDot(profileDot, state.status);
@@ -278,10 +293,19 @@
     settingsEdited = true;
   });
 
+  postLimitEl.addEventListener("input", () => {
+    settingsEdited = true;
+  });
+
   startBtn.addEventListener("click", async () => {
     const { accounts, skipped } = parseAccounts(accountsEl.value);
     if (!accounts.length) {
       alert("Kam se kam ek sahi Instagram profile URL ya handle daalo.");
+      return;
+    }
+    const postLimit = parsePostLimit(postLimitEl.value);
+    if (postLimit === undefined) {
+      alert('Posts per account me ya to ek number daalo (jaise 50), ya "MAX".');
       return;
     }
     if (skipped) {
@@ -299,7 +323,9 @@
     accountsEdited = false;
     settingsEdited = false;
 
-    render(await send({ type: "PROFILE_START", accounts, pageDelaySec, accountDelaySec }));
+    render(
+      await send({ type: "PROFILE_START", accounts, pageDelaySec, accountDelaySec, postLimit })
+    );
   });
 
   stopBtn.addEventListener("click", async () => {
@@ -325,6 +351,7 @@
     accountsEl.value = "";
     pageDelayEl.value = 3;
     accountDelayEl.value = 8;
+    postLimitEl.value = "MAX";
     delayWarningEl.classList.add("hidden");
     render(state);
   });

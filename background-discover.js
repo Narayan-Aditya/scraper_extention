@@ -69,6 +69,9 @@ function defaultDiscoverState() {
     enrich: true,
     enrichStarted: false,
     excludeHandles: [],
+    downloadFolder: "", // "" = straight into Downloads
+    // Set when the brief orchestrator started this run rather than the user.
+    owner: null,
 
     // frontier
     queue: [], // tasks not yet handed to a batch
@@ -459,7 +462,10 @@ function buildDiscoverJson(state, options) {
 
 async function saveDiscoverFile(state, options) {
   try {
-    await downloadJson(discoverFilename(), buildDiscoverJson(state, options));
+    await downloadJson(
+      withDownloadFolder(state.downloadFolder, discoverFilename()),
+      buildDiscoverJson(state, options)
+    );
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e && e.message ? e.message : String(e) };
@@ -671,6 +677,8 @@ async function startDiscoverRun(msg) {
     useChaining: msg.useChaining !== false,
     enrich: msg.enrich !== false,
     excludeHandles,
+    downloadFolder: safeDownloadFolder(msg.downloadFolder),
+    owner: msg.owner || null,
     queue: tasks,
     plannedTaskKeys: tasks.map((task) => task.key),
     seenHandles: excludeHandles.slice(),

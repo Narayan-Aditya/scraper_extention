@@ -20,7 +20,8 @@ label {
 }
 
 textarea,
-input[type="number"] {
+input[type="number"],
+input[type="text"] {
   width: 100%;
   box-sizing: border-box;
   font-family: inherit;
@@ -204,7 +205,8 @@ button {
 #profileSection,
 #youtubeSection,
 #linkedinSection,
-#discoverSection {
+#discoverSection,
+#briefSection {
   display: none;
 }
 
@@ -212,8 +214,39 @@ body.mode-google #googleSection,
 body.mode-profiles #profileSection,
 body.mode-youtube #youtubeSection,
 body.mode-linkedin #linkedinSection,
-body.mode-discover #discoverSection {
+body.mode-discover #discoverSection,
+body.mode-brief #briefSection {
   display: block;
+}
+
+/* What the brief parser read back, above the seeds it produced — so a wrong seed list is
+   traceable to the field it came from instead of looking arbitrary. */
+.plan {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: #f1f3f4;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.plan p {
+  margin: 2px 0;
+}
+
+.warnlist {
+  list-style: disc;
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: #b06000;
+}
+
+/* A file picker is not a 70px number box. */
+.row input[type="file"] {
+  width: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
 }
 
 /* A checkbox row reads left-to-right, unlike the number rows above it. */

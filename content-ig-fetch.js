@@ -64,6 +64,29 @@
     return window.__IG_RUN_TOKEN__ === runToken && !window.__IG_STOP__;
   }
 
+  // Per-account post budget, seeded by the worker. null means MAX — take everything.
+  // postsDelivered starts at whatever earlier injections already banked, so a resume
+  // spends only what is left of the budget instead of starting the count over.
+  const postLimit = Number.isFinite(job.postLimit) && job.postLimit > 0 ? Math.floor(job.postLimit) : null;
+  let postsDelivered = Math.max(0, Number(job.postsSoFar) || 0);
+
+  function budgetLeft() {
+    return postLimit == null ? Infinity : Math.max(0, postLimit - postsDelivered);
+  }
+
+  // Sends one page, trimmed to whatever is left of the budget. Returns "ok", "stopped",
+  // or "limit" — "limit" means the account is finished because the user's count is full,
+  // which is a *complete* result, not a truncated one.
+  async function reportPosts(payload) {
+    const room = budgetLeft();
+    if (room <= 0) return "limit";
+    const posts = payload.posts.length > room ? payload.posts.slice(0, room) : payload.posts;
+    const ack = await report("IG_PAGE", Object.assign({}, payload, { posts }));
+    if (!ack || ack.ok === false) return "stopped";
+    postsDelivered += posts.length;
+    return budgetLeft() <= 0 ? "limit" : "ok";
+  }
+
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -803,7 +826,7 @@
         emptyStreak = 0;
         banked += 1;
         if (fresh.length) {
-          const ack = await report("IG_PAGE", {
+          const sent = await reportPosts({
             userId,
             posts: fresh,
             nextCursor,
@@ -811,7 +834,11 @@
             pageIndex,
             source: "feed_api",
           });
-          if (!ack || ack.ok === false) return "stopped";
+          if (sent === "stopped") return "stopped";
+          if (sent === "limit") {
+            await report("IG_DONE", { capped: false, limited: true });
+            return "done";
+          }
         }
       }
 
@@ -892,7 +919,7 @@
       const nextCursor = info.end_cursor || null;
 
       if (fresh.length) {
-        const ack = await report("IG_PAGE", {
+        const sent = await reportPosts({
           userId,
           posts: fresh,
           nextCursor,
@@ -900,7 +927,11 @@
           pageIndex,
           source: "graphql",
         });
-        if (!ack || ack.ok === false) return "stopped";
+        if (sent === "stopped") return "stopped";
+        if (sent === "limit") {
+          await report("IG_DONE", { capped: false, limited: true });
+          return "done";
+        }
       }
 
       pageIndex += 1;
@@ -957,7 +988,7 @@
       }
 
       if (posts.length > before) {
-        const ack = await report("IG_PAGE", {
+        const sent = await reportPosts({
           userId,
           posts: posts.slice(before),
           nextCursor: null,
@@ -965,7 +996,11 @@
           pageIndex,
           source: "dom",
         });
-        if (!ack || ack.ok === false) return "stopped";
+        if (sent === "stopped") return "stopped";
+        if (sent === "limit") {
+          await report("IG_DONE", { capped: false, limited: true });
+          return "done";
+        }
         stagnantRounds = 0;
       } else {
         stagnantRounds += 1;
@@ -993,6 +1028,12 @@
       return;
     }
 
+    // A resume can land with the budget already spent (worker trimmed a straddling page).
+    if (budgetLeft() <= 0) {
+      await report("IG_DONE", { capped: false, limited: true });
+      return;
+    }
+
     let userId = job.userId || null;
     let seenIds = job.seenPostIds || [];
     const cursor = job.cursor || null;
@@ -1008,7 +1049,7 @@
 
       const seed = resolved.seed;
       if (seed && seed.posts.length) {
-        const ack = await report("IG_PAGE", {
+        const sent = await reportPosts({
           userId,
           posts: seed.posts,
           // The feed API carries its own cursor, so nothing to hand forward here.
@@ -1017,11 +1058,16 @@
           pageIndex: 0,
           source: "web_profile_info",
         });
-        if (!ack || ack.ok === false) return;
+        if (sent === "stopped") return;
         seenIds = seed.posts.map((post) => post.id);
         // Keep the page counter honest: the seed page already counted as page 0.
         pageIndex = 1;
-        // If the whole profile fits on that one page there is nothing left to paginate.
+        // Either the budget is full, or the whole profile fits on that one page —
+        // nothing left to paginate in both cases.
+        if (sent === "limit") {
+          await report("IG_DONE", { capped: false, limited: true });
+          return;
+        }
         if (!seed.hasNext) {
           await report("IG_DONE", { capped: false });
           return;

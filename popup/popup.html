@@ -24,6 +24,9 @@
     <button id="modeDiscoverBtn" class="mode-btn" data-mode="discover">
       IG discovery <span id="discoverModeDot" class="mode-dot hidden"></span>
     </button>
+    <button id="modeBriefBtn" class="mode-btn" data-mode="brief">
+      Brief &rarr; creators <span id="briefModeDot" class="mode-dot hidden"></span>
+    </button>
   </div>
 
   <!-- ============================ Google handle finder ============================ -->
@@ -74,6 +77,12 @@
       placeholder="https://www.instagram.com/natgeo/&#10;@nasa&#10;bbcnews"
     ></textarea>
     <p class="hint">Sirf profile URL chalega — post/reel/explore links skip ho jayenge.</p>
+
+    <div class="row">
+      <label for="igPostLimit">Posts per account</label>
+      <input id="igPostLimit" type="text" inputmode="numeric" value="MAX" placeholder="MAX" />
+    </div>
+    <p class="hint">Number daalo (jaise 50) — har handle se utne hi latest posts. "MAX" = poora account.</p>
 
     <div class="row">
       <label for="igPageDelay">Delay between pages (s)</label>
@@ -318,10 +327,109 @@
     </p>
   </section>
 
+  <!-- ============================== Campaign brief =============================== -->
+  <section id="briefSection">
+    <label for="brBriefText">Campaign brief (paste karo ya file choose karo)</label>
+    <textarea
+      id="brBriefText"
+      rows="6"
+      placeholder="Brand Name:&#10;Huminity&#10;&#10;Niche / Genre:&#10;Lifestyle, Fashion, Beauty&#10;&#10;Tier:&#10;100K to 500K followers&#10;&#10;Location:&#10;Delhi NCR, Mumbai, Bengaluru"
+    ></textarea>
+    <div class="row">
+      <label for="brFile">Ya file se</label>
+      <input id="brFile" type="file" accept=".txt,.md,.markdown,.text,.csv,.json" />
+    </div>
+    <p class="hint">
+      .txt / .md / .csv / .json padhi ja sakti hai. PDF ya Word ka text copy karke upar
+      paste kar do — parser wahi kaam karega.
+    </p>
+
+    <div class="actions">
+      <button id="brParseBtn">Brief padho</button>
+    </div>
+
+    <div id="brPlan" class="plan hidden"></div>
+    <ul id="brWarnings" class="warnlist hidden"></ul>
+
+    <label for="brSeeds">Search seeds (edit kar sakte ho)</label>
+    <textarea id="brSeeds" rows="5" placeholder="Brief padho — seeds yahan apne aap aa jayenge"></textarea>
+    <p class="hint">
+      Yahi lines IG discovery me jayengi: <b>koi bhi text</b> = Instagram search,
+      <b>#tag</b> = hashtag, <b>@handle</b> = us jaise accounts.
+    </p>
+
+    <div class="row">
+      <label for="brCreators">Kitne creator chahiye</label>
+      <input id="brCreators" type="number" min="1" max="50" value="2" />
+    </div>
+    <div class="row">
+      <label for="brPosts">Posts per creator</label>
+      <input id="brPosts" type="text" inputmode="numeric" value="10" placeholder="10" />
+    </div>
+    <div class="row">
+      <label for="brMinFollowers">Min followers</label>
+      <input id="brMinFollowers" type="number" min="0" step="1000" value="100000" />
+    </div>
+    <div class="row">
+      <label for="brMaxFollowers">Max followers</label>
+      <input id="brMaxFollowers" type="number" min="1000" step="10000" value="500000" />
+    </div>
+    <div class="row">
+      <label for="brDepth">Depth (0 = sirf seeds)</label>
+      <input id="brDepth" type="number" min="0" max="3" value="2" />
+    </div>
+    <div class="row">
+      <label for="brMaxCandidates">Max candidates</label>
+      <input id="brMaxCandidates" type="number" min="50" max="5000" step="50" value="500" />
+    </div>
+    <div class="row">
+      <label for="brDelay">Delay between requests (s)</label>
+      <input id="brDelay" type="number" min="2" value="4" />
+    </div>
+    <div class="row">
+      <label for="brFolder">Download folder</label>
+      <input id="brFolder" type="text" placeholder="brief_brand_2026-08-31" />
+    </div>
+
+    <div class="actions">
+      <button id="brStartBtn">Start</button>
+      <button id="brStopBtn" class="hidden">Stop run</button>
+    </div>
+
+    <div id="brPauseBanner" class="banner hidden">
+      <p>Run pause ho gaya hai — neeche wajah dekho, phir Resume dabao.</p>
+      <p id="brPauseDetail" class="detail"></p>
+      <button id="brResumeBtn">Resume</button>
+    </div>
+
+    <div class="status">
+      <p id="brStatusLine">Idle</p>
+      <p id="brSubStatus"></p>
+    </div>
+
+    <ul id="brPicked" class="completed hidden"></ul>
+    <ul id="brLog"></ul>
+
+    <div class="actions">
+      <button id="brResetBtn" class="danger">Reset</button>
+    </div>
+    <p class="hint">
+      Ek hi folder me sab kuch aata hai: <code>_brief-plan.json</code> (kya samjha gaya),
+      <code>_shortlist.json</code> (poori ranked list), har chune hue creator ka
+      <code>&lt;handle&gt;.json</code> (profile + posts), aur <code>_summary.json</code>.
+    </p>
+    <p class="hint">
+      Gender split apne aap nahi hota — profile se gender bharosemand tarike se pata nahi
+      chalta. <code>_shortlist.json</code> ki ranked list se khud pick karo.
+    </p>
+  </section>
+
+  <script src="brief-parse.js"></script>
   <script src="popup.js"></script>
   <script src="popup-profiles.js"></script>
   <script src="popup-youtube.js"></script>
   <script src="popup-linkedin.js"></script>
   <script src="popup-discover.js"></script>
+  <script src="popup-brief.js"></script>
 </body>
 </html>
