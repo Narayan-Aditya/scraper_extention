@@ -1,6 +1,6 @@
 # Insta Handle Finder
 
-Six tools in one side panel, switched with the tabs at the top:
+Seven tools in one side panel, switched with the tabs at the top:
 
 | Mode | What it does |
 |---|---|
@@ -10,6 +10,7 @@ Six tools in one side panel, switched with the tabs at the top:
 | **LinkedIn posts** | Takes a LinkedIn search-results URL and exports every post the search returns to `linkedin-<keywords>.json`. |
 | **IG discovery** | Walks Instagram's *own* suggestion graph from a seed creator/phrase/hashtag and produces a scored list of creator handles. |
 | **Brief → creators** | Reads a campaign brief, runs discovery from it, and exports the top N creators (profile + N posts each) into one download folder. |
+| **Brands → contacts** | Takes a list of brand names and builds a decision-maker row per brand — who the owner/director is, their number and address where public, and the company's own contacts kept separate from theirs. |
 
 Modes 1-5 are independent — separate runs, separate tabs, separate saved state —
 so the natural workflow is to find handles (mode 1 or mode 5) and feed them into
@@ -54,6 +55,8 @@ isn't Google or Instagram — there is no backend, no telemetry, no account.
 | `https://www.instagram.com/*`, `https://instagram.com/*`, `https://i.instagram.com/*` | Mode 2 — open the profile and read its data as your logged-in session |
 | `https://www.youtube.com/*`, `https://youtube.com/*`, `https://m.youtube.com/*` | Mode 3 — open the channel and read its data as your logged-in session |
 | `https://www.linkedin.com/*`, `https://linkedin.com/*` | Mode 4 — open the search and read the results as your logged-in session |
+| `https://www.apollo.io/*`, `https://apollo.io/*` | Mode 7 — open a company's public Apollo page when you ask for it |
+| `<all_urls>` (**optional**) | Mode 7 — read a brand's *own* website, the registry directors table, and the lead-database pages. Optional on purpose: Chrome only asks when you press Start in that mode, and the Google half works without it |
 
 > After adding a new host permission, Chrome may show the extension as needing
 > re-enabling on the `chrome://extensions` card the first time. Toggle it off and
@@ -642,10 +645,13 @@ already does that job properly; discovery hands it a ranked queue.
    `mumbaifoodblogger` is far more often a phrase somebody typed than an account
    they meant.
 3. Set the follower band you actually want (default 1K–1M, the micro/mid
-   influencer window), depth, and the caps. **Start**.
-4. When it finishes, `ig-discovery_<date>.json` downloads by itself. **Handles
-   copy** puts just the kept handles on the clipboard — paste them into the
-   **Instagram profiles** tab to export them properly.
+   influencer window), depth, and the caps.
+4. Optionally switch on **Sirf Indian creators** and/or **Raat bhar mode** — both
+   have their own sections below. **Start**.
+5. When it finishes, `ig-discovery_<date>.json` downloads by itself. **Handles
+   copy** puts one of three lists on the clipboard — pick which with the dropdown
+   beside it — and you paste that into the **Instagram profiles** tab to export
+   them properly.
 
 Depth 0 means "only the seeds". Depth 2 (the default) means seeds → their similar
 accounts → *their* similar accounts. Each level multiplies the request count, so
@@ -661,6 +667,88 @@ capped at 400 candidates, reported when it bites.
 
 With it off the run is much faster, and most scores come back `?`. That is not a
 low score — see below.
+
+**If you want "2K+ followers" or "Indian creators", leave this on.** Both of
+those filters need data only this pass fetches — a follower count, a bio, a city.
+Without it the run still works, it just cannot confirm either, so both of the
+narrow lists come back empty. The panel asks before starting a run that has one
+of those switches on and detail off.
+
+### Sirf Indian creators
+
+Off by default. It is a **delivery-side** filter: it changes which handles the
+run hands over at the end, and nothing else. It never gates `keep` and it never
+gates the walk — most listing records carry no bio, no city and no phone, so
+requiring India evidence to chain from an account would collapse the frontier on
+the very first hop. Geography comes from your seeds; this decides the output.
+
+An account is called Indian only on **positive evidence**:
+
+| Signal | Strength | Where it comes from |
+|---|---|---|
+| `phone_country_code` is 91 | strong | `/info/` business record |
+| `city_name` is an Indian city/state | strong | `/info/` business record |
+| `+91 …` number in the bio | strong | bio |
+| Devanagari / Bengali / Tamil / Telugu / Gujarati / Gurmukhi / Kannada / Malayalam / Odia text | strong | bio or display name |
+| "India" / "Indian" / "Bharat" / "desi" in the bio | strong | bio |
+| An Indian city or state named in the bio | strong | bio |
+| ₹ / "Rs 5000" / "INR" in the bio | weak | bio |
+| Link on a `.in` domain | weak | `external_url` |
+
+One strong signal is enough; two weak ones together are enough; one weak one on
+its own is not. Whichever fired is written into the row as `india_signals`, so
+the verdict can be argued with instead of taken on faith.
+
+**Absence is never a "no".** An account with nothing to go on is `"unknown"`, not
+"not Indian" — it stays in the file in full and simply is not in the India list.
+The same null rule the score uses, for the same reason.
+
+**Names are deliberately not a signal.** Guessing somebody's nationality from
+their name is unreliable and gets individual people wrong, and this list ends up
+in someone's outreach — there is a real person on the other end of a bad guess.
+
+A few place names exist outside India too (there is a Hyderabad in Pakistan,
+Punjab spans the border), so a place match is evidence rather than proof. That is
+why every signal is recorded.
+
+### Raat bhar mode (unattended runs)
+
+Off by default, and it is the **one** place this project relaxes its "a run waits
+for a human" stance. Switch it on, say how many hours, and the run supervises
+itself:
+
+| What happens | What the run does |
+|---|---|
+| The hours you set run out | Saves the file and stops. The file only exists once a run finishes, so without this a run still going at 7am has produced nothing. |
+| **Rate limit (429)** | Waits out the **full** backoff, then resumes itself. Max 4 times a night. |
+| Login wall (401), 403, checkpoint | **Nothing.** Sits there until you deal with it. |
+| Tab closed, or discarded by Chrome | Re-opens it, re-queues the tasks that had not reported, carries on. Max 20 times. |
+| Batch goes silent (crashed page, discarded tab) | Same recovery, on a 2-minute watchdog. |
+
+The line between the second row and the third is the whole point. Waiting out a
+rate limit is what you would have done yourself; it is patience, not evasion.
+Clicking past a checkpoint would be working around a block, so it is not done —
+awake or asleep.
+
+Practical setup, none of which the extension can do for you:
+
+- **Laptop plugged in, system sleep off** (display off is fine). Chrome is fully
+  suspended while Windows sleeps and alarms do not fire.
+- **`chrome://settings/performance` → let instagram.com be an exception** to
+  Memory Saver, so Chrome does not discard the tab under you. The watchdog
+  recovers from a discard, but not having one is better.
+- **Slow the pacing down.** The defaults (4s / 10s) are tuned for a run you are
+  watching. For hours unattended, 20-30s between requests and 180-300s between
+  batches keeps it near 60-110 requests/hour, which is a very different load on
+  one account than the default is.
+
+**Be honest with yourself about the risk.** Hours of continuous private-API calls
+from one personal logged-in account is the heaviest thing this tool can do, and
+overnight activity is its own signal. The realistic outcomes are escalating
+429s, then a temporary action block, then a checkpoint you have to clear. Do not
+do this from an account you cannot afford to have restricted. Two or three
+shorter evening runs on different seeds get you the same coverage for a fraction
+of the exposure.
 
 ### How a candidate is scored
 
@@ -703,7 +791,9 @@ Private accounts are the one hard drop — nothing about them can be exported la
     "keep_threshold": 50,
     "chaining_enabled": true,
     "enrich_enabled": true,
-    "excluded_handles": 0
+    "excluded_handles": 0,
+    "india_only": true,
+    "unattended": true
   },
   "runaway_guard_hit": null,          // or "max_candidates" / "max_tasks"
   "sources_disabled": [],             // sources that stopped answering mid-run
@@ -723,9 +813,13 @@ Private accounts are the one hard drop — nothing about them can be exported la
       "is_business": true,
       "category": "Digital creator",
       "external_url": "https://linktr.ee/somefoodie",
+      "city_name": "Mumbai",          // /info/ only, and only if they filled it in
+      "phone_country_code": "91",     // the code only — never the number itself
       "score": 86,                    // null means "not enough evidence", never 0
       "score_known_weight": 125,      // how much evidence that score is based on
       "signals": { "followers": "in_band", "ratio": "high", "category": "creator" },
+      "india": "yes",                 // "yes" or "unknown" — never "no"
+      "india_signals": ["city", "bio_place"],   // why it was called Indian
       "keep": true,
       "enriched": true,
       "found_via": "@somecreator",    // which seed/step surfaced it
@@ -733,12 +827,39 @@ Private accounts are the one hard drop — nothing about them can be exported la
       "depth": 1
     }
   ],
-  "kept_handles": ["somefoodie", "..."]   // paste-ready for mode 2
+  "kept_handles": ["somefoodie", "..."],           // paste-ready for mode 2
+  "in_band_handles": ["somefoodie", "..."],        // kept AND measured AND inside the band
+  "india_in_band_handles": ["somefoodie", "..."]   // ...AND evidence of being Indian
 }
 ```
 
 `candidates` is sorted best-first. Unrated candidates sort below rated ones —
 they are unmeasured, not rejected.
+
+**`kept_handles` vs `in_band_handles`.** They answer different questions and the
+gap between them is the useful part. `keep` is generous on purpose: an account
+nobody could measure is not evidence against itself, so it stays. That means
+`kept_handles` contains accounts with no follower count at all, and accounts the
+other signals carried over the threshold from just outside the band.
+
+`in_band_handles` is the stricter list — kept, **and** it has a real
+`follower_count`, **and** that number is inside the band you set. It is the only
+one of the two you can honestly call "the accounts in my follower range".
+
+It comes back short, or empty, when the **detail switch was off** — without that
+pass almost nothing has a follower count to check, so there is nothing to confirm
+against the band. That is the true answer, not a fault. Nothing is dropped from
+the file either way: every candidate is still in `candidates`, with its
+`followers` either a number or `null`.
+
+`india_in_band_handles` narrows it once more: everything `in_band_handles` asks
+for, plus positive evidence of being Indian. It is the list an overnight India
+run exists to produce.
+
+The three are nested — every handle in the India list is in the band list, and
+every handle in the band list is in the kept list. The panel's finish line reports
+all three counts so you can see the gaps without opening the file, and the
+dropdown beside **Handles copy** chooses which one goes to the clipboard.
 
 ### When it pauses
 
@@ -752,6 +873,11 @@ of the ones that had.
 | Rate limit (429) | Wait out the cool-down the panel counts down, then **Resume**. |
 | Blocked (403) / checkpoint | Clear it in the tab, then **Resume**. |
 | Tab closed | **Resume** re-opens it and carries on from the same frontier. |
+
+**The one documented exception** is *raat bhar* mode, and only for the rate limit
+row: with it on, that pause resumes itself once the full backoff has elapsed, up
+to four times a night, and a closed or discarded tab is re-opened. Every other row
+in the table still waits for you, awake or asleep. See the section above.
 
 ### Good to know / limits
 
@@ -768,6 +894,18 @@ of the ones that had.
 - **Runaway guards**: 500 candidates by default (5000 max), 2000 frontier tasks,
   400 enrichment requests. All three are reported in the log and written into the
   file as `runaway_guard_hit` — never a silent truncation.
+- **A runaway guard stops the walk, not the run.** When the candidate or task cap
+  bites, the discovery tasks still queued are dropped — they could only surface
+  candidates there is no room to store — but the **detail pass still runs**.
+  Finishing at the cap would hand back a file where almost nothing has a follower
+  count, which would make both `in_band_handles` and `india_in_band_handles`
+  empty for a run that had actually found plenty.
+- **The detail cap is what limits "confirmed" results, not the clock.** Only
+  enriched candidates have a follower count, and that pass is capped at 400 per
+  run. However long a run goes, at most 400 accounts come back *measured* — so a
+  long night's realistic yield is a few hundred confirmed handles, not thousands.
+  Repeat runs on different seeds, with the previous night's handles pasted into
+  **Exclude handles**, is how you get past that.
 - **Only plausible creators grow the frontier.** A candidate that scores below the
   keep threshold, or is private, is stored but never chained from — otherwise one
   bad seed drags the whole walk into a neighbourhood you did not ask for.
@@ -889,6 +1027,274 @@ tagged; an untagged one is not its own.
 
 ---
 
+## Mode 7 — Brands → contacts
+
+Paste a list of brand names. For each one it builds a row: official website,
+public email addresses, phone numbers, social profiles, and the people publicly
+described as founder / owner / CEO — with the URL every single claim came from.
+
+It reads **only pages that are already public to a logged-out visitor**: Google
+results, the brand's own website, and (if you ask) a LinkedIn or Apollo page. It
+does not log in anywhere for you, does not open a paid database, and does not
+guess an address from a name pattern. If a page wants a login, that is written
+on the row as a note and the run moves on.
+
+### How to use it
+
+1. Open the side panel → **Brands → contacts**.
+2. Paste the brands, one per line (commas work too):
+   ```
+   Mamaearth
+   boAt Lifestyle
+   Nykaa
+   ```
+3. Optional **region hint** (`India`) — it joins the Google query, so a same-named
+   brand from another country stops showing up.
+4. Press **Start**. Chrome asks for site access the first time (see below).
+
+### The five steps per brand
+
+| # | Page it opens | What it takes from it |
+|---|---|---|
+| 1 | Google `"<brand>" official website contact email` | the official website, social profiles, any contact detail printed in the snippets |
+| 2 | Google `site:linkedin.com "<brand>" (founder OR CEO OR owner OR director OR manager)` | decision-maker names + their profile URLs, the LinkedIn company page |
+| 3 | Google `(site:apollo.io OR site:rocketreach.co OR site:lusha.com OR site:contactout.com OR site:easyleadz.com OR site:coresignal.com OR ...)` | more names + titles, and the page on each database where the name was read |
+| 4 | Google `(site:zaubacorp.com OR site:tofler.in OR site:indiafilings.com OR ...)` | the registry page for the company |
+| 5 | the brand's own site — homepage, then its contact/about/team pages | `mailto:`/`tel:` links, schema.org data, footer numbers, **and the number printed inside a person's own card** |
+| 6 | the registry page | the **directors table** — the board, by name |
+| 7 | *(off by default)* the LinkedIn / lead-database pages themselves | whatever those pages show you while logged in |
+
+**All six people-search databases ride in one Google query, not six.** Asking
+them separately would be six searches a brand — sixty for a ten-brand list, and a
+CAPTCHA long before the end.
+
+Steps 1-4 are what the directories *say*. Steps 5-6 are what the brand and the
+registrar *publish*, and that is where nearly every real number comes from —
+which is why they run even when the searches come back empty.
+
+> **What the lead databases actually give you.** Apollo, RocketReach, Lusha,
+> ContactOut, EasyLeadz and CoreSignal keep their direct-dial numbers behind a
+> login and a paid credit, and their public pages show a masked number
+> (`+91 98***10`) that the phone parser correctly refuses. So they are used for
+> **who the decision maker is** — name, title, profile link — and the number is
+> then looked for on sources that publish one in full. If you want their
+> unmasked data, that is their paid API, not a browser extension.
+
+### Site access
+
+Reading a brand's own website means injecting into an arbitrary domain, which
+needs Chrome's `<all_urls>` permission. Holding that permanently for a run you
+may never do is a bad trade, so it is **optional** and requested from the panel
+the first time you press Start.
+
+- **Granted** → all five steps run.
+- **Refused** → the run still works, but step 4 is skipped and each affected row
+  says `website mila par site-access permission nahi hai`. You will get names and
+  URLs, and far fewer emails.
+- The **Site access do** button re-asks at any time; granting it mid-run takes
+  effect on the very next brand.
+
+### How a website is chosen
+
+Not "the first Google result". A domain that *spells the brand* beats a
+higher-ranked one, and platforms (Instagram, Amazon, Wikipedia…) and lead
+databases (Apollo, ZoomInfo, IndiaMART, JustDial…) are never treated as the
+official site however high they rank. When nothing matched on name, the pick is
+still made but the row records that it was a guess.
+
+### How a contact detail earns its place
+
+Every email and phone carries **where it came from** and **how sure we are**:
+
+| Confidence | Comes from |
+|---|---|
+| `high` | a `mailto:`/`tel:` link, or a schema.org `Organization` block |
+| `medium` | plain text on the brand's own page, or a Google snippet for that brand |
+| `low` | a number found loose in page text, or in a directory's snippet |
+
+The same address seen twice is one address that we are now surer about, not two
+rows. A snippet's details are only accepted when the result is plausibly about
+*that* brand (its own domain, or the brand's name in the host or title) — without
+that rule, one competitor ranking on the query would put its sales email on your
+row.
+
+Phone numbers are the noisy field. A date (`20240115`), a repeated run
+(`0000000000`) and a bare 8-digit order id are rejected outright, and anything
+found in loose text is marked `low` so a human can tell it apart from a `tel:`
+link.
+
+### Owner, not reception
+
+This is the part the mode exists for. A row is not "here are some contacts" — it
+is **"here is the decision maker, and here is how to reach them"**.
+
+Only leadership titles are kept — founder, co-founder, owner, proprietor, CEO,
+managing director, director, partner, president, chairman, C-level, manager.
+Without that filter the searches return every employee whose profile mentions the
+brand and the row stops answering "who do I contact". Titles are ranked, so the
+founder is the headline and the marketing manager is not.
+
+Names come from four places, and the row says which: a search result title
+(`linkedin_snippet`, `rocketreach_snippet`, …), a schema.org `founder` field
+(`site_jsonld`), a role word next to a name on an about/team page (`site_text`),
+or a registry's directors table (`registry_page_text`).
+
+**How a number becomes *that person's* number.** Three ways, and nothing else:
+
+1. It is inside their own card on the page. The card is walked outward from the
+   role word only as long as it stays small (under ~400 characters) — the moment
+   the enclosing element holds the whole page, the link between name and number is
+   gone and nothing is claimed.
+2. The site's own schema.org `Person` block states it.
+3. For emails only: the address is *built out of their name* —
+   `ravi.sharma@`, `rsharma@`, `ravi@`, `sharma@`. Structural matches only; a
+   shared inbox is never claimed even if the name would fit.
+
+Everything else is sorted into three honest buckets:
+
+| Bucket | What it holds |
+|---|---|
+| `decision_makers[].phones / .emails` | tied to a named person by one of the three rules above |
+| `unattributed_personal` | looks personal (a "Mobile:" label, a non-role address) but no name could be attached |
+| `company_contacts` | `info@`, `sales@`, reception, toll-free — the company's, not a person's |
+
+`best_contact` is the top of that: one name, one number, one address, one profile
+link. When no named person could be reached it is `null` — the mode says so rather
+than passing the switchboard off as the owner.
+
+Tick **Sirf owner/director ke contact rakho** and the company bucket is dropped
+from the file entirely, replaced by a count of what was left out.
+
+### Board of directors
+
+For an Indian private limited, LinkedIn shows whoever posts and the lead databases
+show whoever was scraped — neither is the **board**. The registry sources
+(Zauba Corp, Tofler, IndiaFilings, InstaFinancials) publish the directors table
+from the MCA filings, which is public record. That is the one source that answers
+"board of directors" literally, so its page is opened whenever the toggle is on and
+site access is granted — it does not wait for the "open profile pages" option.
+
+Names there are printed in caps; they are title-cased on the way in, both so the
+file is readable and so a name-built email can match them.
+
+### When it pauses
+
+Only Google can pause the run — a CAPTCHA, a `/sorry/` redirect, or an
+"unusual traffic" page. Solve it in the tab and press **Resume**; it retries the
+exact search it stopped on.
+
+A brand's *website* never pauses the run. A site that will not load, will not run
+the script, or never finishes loading is noted on the row and stepped over — one
+broken site out of fifty should not cost you the other forty-nine.
+
+### Output format — `brands_contacts_<date>.json`
+
+Written automatically when the run finishes, and available any time from
+**Download JSON** / **Download CSV**.
+
+```jsonc
+{
+  "generated_at": "2026-09-01T10:12:00.000Z",
+  "region_hint": "India",
+  "status": "done",
+  "owner_only": false,
+  "brands_requested": 3,
+  "brands_complete": 3,
+  "sources": {
+    "google": true,
+    "brand_website": true,
+    "linkedin_search": true,
+    "lead_databases": ["apollo.io", "rocketreach.co", "lusha.com", "contactout.com",
+                       "easyleadz.com", "coresignal.com", "zoominfo.com", "signalhire.com"],
+    "company_registries": ["zaubacorp.com", "tofler.in", "indiafilings.com", "instafinancials.com"],
+    "profile_pages_opened": false
+  },
+  "rows": [
+    {
+      "brand": "Acme Foods",
+      "website": "https://acme.com/",
+
+      // The answer, if there is one. null when nobody named could be reached.
+      "best_contact": {
+        "name": "Ravi Sharma",
+        "title": "Founder",
+        "phone": "+919812345678",
+        "email": "ravi.sharma@acme.com",
+        "profile": "https://in.linkedin.com/in/ravi-sharma",
+        "source": "linkedin_snippet"
+      },
+
+      "decision_makers": [
+        {
+          "name": "Ravi Sharma", "title": "Founder", "confidence": "medium",
+          "url": "https://in.linkedin.com/in/ravi-sharma", "source": "linkedin_snippet",
+          "phones": [ { "value": "+919812345678", "label": "direct", "confidence": "high",
+                        "how": "person_card_tel", "source_url": "https://acme.com/team" } ],
+          "emails": [ { "value": "ravi.sharma@acme.com", "confidence": "high",
+                        "how": "mailto+name_match", "source_url": "https://acme.com/team" } ]
+        },
+        { "name": "Anita Desai", "title": "Managing Director", "source": "registry_page_text",
+          "confidence": "low", "phones": [], "emails": [] }
+      ],
+
+      // Looks personal, but no name could be attached to it.
+      "unattributed_personal": { "emails": [], "phones": [
+        { "value": "+919876543210", "label": "mobile", "confidence": "high", "how": "tel" } ] },
+
+      // Dropped entirely when owner_only is on, replaced by company_contacts_dropped: <n>
+      "company_contacts": {
+        "emails": [ { "value": "info@acme.com", "confidence": "high", "how": "mailto" } ],
+        "phones": [ { "value": "+911140001234", "label": "reception", "confidence": "high" } ]
+      },
+
+      "socials": { "instagram": "https://www.instagram.com/acmefoods/" },
+      "linkedin_company": "https://www.linkedin.com/company/acme-foods",
+      "apollo_url": null,
+      "lead_db_pages": [ { "host": "rocketreach.co", "url": "https://rocketreach.co/..." } ],
+      "registry_pages": [ { "host": "zaubacorp.com", "url": "https://www.zaubacorp.com/..." } ],
+      "pages_seen": ["https://acme.com/", "https://acme.com/team"],
+      "notes": [],
+      "status": "done"
+    }
+  ]
+}
+```
+
+The CSV is the same data flattened one row per brand, **owner columns first** —
+`brand, owner_name, owner_title, owner_phone, owner_email, owner_profile` — then
+the rest of the decision makers, the unattributed personal lines, the company
+contacts, and the evidence. Multi-value fields are joined with `; `.
+
+### Good to know / limits
+
+- **Cost is roughly `4 Google searches + up to N website pages + 1 registry page`
+  per brand**, at the delays you set. Twenty brands at the defaults is about 140
+  page loads. Google is the thing that rate-limits, which is why its delay
+  defaults to 15s and the website delay to 6s.
+- **Nothing here is a paid database.** The six lead databases keep their
+  direct-dial numbers behind a login and a bill; this reads their *public* pages
+  only, for names and titles. If a brand publishes no contact detail anywhere, the
+  row comes back empty and says so — that is the honest answer, not a bug.
+- **A generic inbox is the usual result for small brands.** `hello@`, `care@`,
+  `info@` are what most sites publish, and those land in `company_contacts`, never
+  in `best_contact`. A named owner's personal mobile is genuinely rare on a public
+  page; where it exists it is usually a team page, a registry filing, or an SME's
+  own footer — and this will not invent one when it is not there.
+- **A third-party page never speaks for the brand.** Contacts read off a
+  RocketReach, Lusha, LinkedIn or Zauba page are dropped if they belong to *that*
+  site's own domain, so `support@rocketreach.co` can never be filed as the brand's
+  support address. Only the people they name, and anything inside a person's own
+  card, survive from those pages.
+- **`no-reply@` addresses are dropped** on purpose, along with build/analytics
+  addresses (Sentry, Wix) and `logo@2x.png`-style filenames a regex would
+  otherwise read as an address.
+- **Check what you send.** Whether you may contact these addresses is a GDPR /
+  DPDP / CAN-SPAM question about *your* outreach, not about reading a public page.
+  The file gives you the source URL for every claim so a human can verify it
+  before anything is sent.
+
+---
+
 ## Troubleshooting
 
 **Where to look first.** `chrome://extensions` → the extension's card →
@@ -965,6 +1371,8 @@ the channel page does not carry them.
 | `background-discover.js` | Service worker — owns the discovery frontier (BFS, dedupe, caps) and the creator scorer, writes the file |
 | `content-ig-discover.js` | Injected into the Instagram tab — runs a batch of discovery questions and reports candidates |
 | `background-brief.js` | Service worker — sequences discovery → selection → export for one brief, writes the plan/shortlist/summary files |
+| `background-brands.js` | Service worker — owns the per-brand step queue, the contact merge/dedupe rules and the JSON/CSV output |
+| `content-brand-fetch.js` | Injected into whatever page mode 7 is on — reads a Google results page, or mines one web page for emails/phones/socials/people |
 | `popup/brief-parse.js` | Pure brief reader (cities, niches, tier, counts → seeds). No DOM, no chrome APIs, testable under Node |
 | `offscreen.html` / `offscreen.js` | Turns the collected JSON into a downloadable blob URL (a service worker can't) |
 | `popup/` | The side panel UI (HTML/CSS/JS), loaded via `side_panel.default_path` |

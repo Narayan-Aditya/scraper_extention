@@ -264,13 +264,17 @@ async function ensureOffscreenDocument() {
 // Blob URLs must outlive the download, so they are revoked from chrome.downloads.onChanged.
 const pendingDownloadUrls = new Map();
 
-async function downloadJson(filename, json) {
+// `mime` exists for the brand runner's CSV export — every other caller writes JSON and
+// leaves it at the default. The blob's type is what Chrome records for the saved file,
+// so a .csv written as application/json would open in the wrong app.
+async function downloadJson(filename, json, mime) {
   await ensureOffscreenDocument();
 
   const minted = await chrome.runtime.sendMessage({
     target: "offscreen",
     type: "OFFSCREEN_MAKE_URL",
     json,
+    mime: mime || "application/json",
   });
   if (!minted || !minted.ok || !minted.url) {
     throw new Error((minted && minted.error) || "offscreen document did not return a URL");

@@ -23,11 +23,29 @@
 
 const DISCOVER_STATE_KEY = "discoverRunState";
 const DISCOVER_ALARM = "discoverNextBatch";
+// The supervisor. Only armed for an unattended run, and it is a *periodic* alarm rather
+// than three one-shot ones on purpose: it re-reads the whole state each tick and decides
+// what the run needs, so a tick that never fired (laptop asleep) costs nothing — the next
+// one sees the same situation and acts on it.
+const DISCOVER_WATCHDOG_ALARM = "discoverWatchdog";
 const DISCOVER_NOTIF_ID = "discover-pause";
 
 const DISCOVER_INJECT_ATTEMPTS = 3;
 const DISCOVER_RATE_LIMIT_BASE_MS = 60 * 1000;
 const DISCOVER_RATE_LIMIT_MAX_MS = 15 * 60 * 1000;
+
+const DISCOVER_WATCHDOG_MINUTES = 2;
+// Only a rate limit is ever auto-resumed, and only once its full backoff has elapsed. That
+// is waiting a block out, which is exactly what the human would have been doing — it is not
+// evasion, and the distinction is the whole reason the other pause reasons are excluded. A
+// login wall, a 403 and a checkpoint all need a person, and clicking past them
+// automatically would be working around a block rather than respecting it.
+const DISCOVER_MAX_AUTO_RESUMES = 4;
+// A silently dead batch (discarded tab, crashed page) is a mechanical failure, not a block,
+// so recovering from it is just re-doing work that never happened. Still bounded: if it
+// keeps happening something is wrong that a restart will not fix.
+const DISCOVER_MAX_STALL_RECOVERIES = 20;
+const DISCOVER_MAX_RUN_HOURS = 14;
 
 // One injection handles this many frontier tasks before handing control back. Small enough
 // that a crash or a closed tab loses almost nothing, large enough that we are not paying
@@ -72,6 +90,19 @@ function defaultDiscoverState() {
     downloadFolder: "", // "" = straight into Downloads
     // Set when the brief orchestrator started this run rather than the user.
     owner: null,
+    // Delivery-side preference only. It never gates `keep` and never gates the walk: most
+    // listing records carry no bio, no city and no phone, so requiring India evidence to
+    // chain from an account would collapse the frontier on the first hop. Geography comes
+    // from the seeds; this decides which handles the run *hands over* at the end.
+    indiaOnly: false,
+
+    // Unattended ("raat bhar") operation. Off by default: this project's whole stance is
+    // that a run stops and waits for a human, and this is the single place that is relaxed
+    // — narrowly, and only for the one failure that clears itself with time.
+    unattended: false,
+    deadlineTs: 0, // 0 = no deadline; otherwise stop and save at this timestamp
+    autoResumesUsed: 0,
+    stallRecoveries: 0,
 
     // frontier
     queue: [], // tasks not yet handed to a batch
@@ -84,7 +115,7 @@ function defaultDiscoverState() {
     retryCount: 0,
     backoffUntilTs: 0,
     capped: null, // which runaway guard stopped the walk, if any
-    totals: { tasksDone: 0, tasksPlanned: 0, candidates: 0, kept: 0 },
+    totals: { tasksDone: 0, tasksPlanned: 0, candidates: 0, kept: 0, inBand: 0, indiaInBand: 0 },
     lastEvent: "",
     log: [],
     updatedAt: 0,
@@ -302,6 +333,90 @@ function keepDiscoverCandidate(candidate, scored, threshold) {
 }
 
 const DISCOVER_KEEP_THRESHOLD = 50;
+
+// --------------------------------------------------------------------- india detection
+//
+// Same null rule as the scorer, for the same reason: this looks for *positive* evidence
+// that an account is Indian and never reads the opposite out of silence. Most listing
+// records carry no bio, no city and no phone, so an account with nothing to go on comes
+// back "unknown" — calling those foreign would throw away most of a run, and calling them
+// Indian would make the list a lie. The verdict is therefore only ever "yes" or "unknown",
+// and the delivery list asks for "yes".
+//
+// Names are deliberately not a signal. Guessing somebody's nationality from their name is
+// unreliable and gets individual people wrong, and this list ends up in someone's outreach
+// — there is a person on the other end of a wrong guess.
+
+// The scripts written in India. Unlike a place name these do not collide with anywhere
+// foreign, so one of them on its own is enough.
+const INDIC_SCRIPT_RE =
+  /[ऀ-ॿঀ-৿਀-੿઀-૿଀-୿஀-௿ఀ-౿ಀ-೿ഀ-ൿ]/;
+// The leading + is required. Without it "91" followed by digits matches the middle of far
+// too many ordinary phone numbers.
+const INDIA_PHONE_RE = /\+\s?91[\s-]?\d{5}/;
+const INDIA_WORD_RE = /\b(india|indian|bharat|hindustan|desi)\b/i;
+const INDIA_MONEY_RE = /(₹|\brs\.?\s*\d|\binr\b)/i;
+
+// Cities and states. A few exist elsewhere too — there is a Hyderabad in Pakistan, Punjab
+// spans the border — so a place match is evidence, not proof. That is exactly how it is
+// used: every signal that fired is written into the candidate row, so a human reading the
+// file can see *why* an account was called Indian and disagree with it.
+const INDIA_PLACES = [
+  "mumbai", "bombay", "navi mumbai", "thane", "delhi", "gurgaon", "gurugram", "noida",
+  "ghaziabad", "faridabad", "bengaluru", "bangalore", "hyderabad", "chennai", "madras",
+  "kolkata", "calcutta", "pune", "ahmedabad", "surat", "jaipur", "lucknow", "kanpur",
+  "nagpur", "indore", "bhopal", "patna", "vadodara", "ludhiana", "agra", "nashik",
+  "rajkot", "varanasi", "srinagar", "amritsar", "jodhpur", "coimbatore", "kochi",
+  "cochin", "thiruvananthapuram", "trivandrum", "mysuru", "mysore", "mangalore",
+  "madurai", "visakhapatnam", "vizag", "vijayawada", "guwahati", "bhubaneswar",
+  "dehradun", "chandigarh", "raipur", "ranchi", "jamshedpur", "udaipur", "jalandhar",
+  "aurangabad", "shillong", "imphal", "gangtok", "siliguri", "kozhikode", "calicut",
+  "thrissur", "tirupati", "salem", "jabalpur", "gwalior", "meerut", "allahabad",
+  "prayagraj", "bareilly", "aligarh", "kota", "ajmer", "bikaner", "hubli", "belgaum",
+  "warangal", "kolhapur", "solapur", "panaji", "pondicherry", "puducherry",
+  "maharashtra", "karnataka", "kerala", "tamil nadu", "telangana", "andhra pradesh",
+  "gujarat", "rajasthan", "punjab", "haryana", "bihar", "odisha", "orissa", "assam",
+  "jharkhand", "chhattisgarh", "uttarakhand", "himachal", "uttar pradesh",
+  "madhya pradesh", "west bengal", "goa", "sikkim", "manipur", "meghalaya", "nagaland",
+  "tripura", "mizoram", "arunachal",
+];
+const INDIA_PLACE_RE = new RegExp(
+  "\\b(" + INDIA_PLACES.map((place) => place.replace(/ /g, "\\s+")).join("|") + ")\\b",
+  "i"
+);
+
+// Strong signals stand alone; weak ones need company. A rupee sign or a .in link is a real
+// hint, but neither is rare enough outside India to convict on by itself — whereas a +91
+// number, a Devanagari bio or a city on the business record is not something a non-Indian
+// account picks up by accident.
+const INDIA_WEAK_SIGNALS = new Set(["bio_money", "in_domain"]);
+
+function detectIndiaSignals(candidate) {
+  const bio = typeof candidate.biography === "string" ? candidate.biography : "";
+  const name = typeof candidate.full_name === "string" ? candidate.full_name : "";
+  const city = typeof candidate.city_name === "string" ? candidate.city_name : "";
+  const url = typeof candidate.external_url === "string" ? candidate.external_url : "";
+  const signals = [];
+
+  if (String(candidate.phone_country_code || "").replace(/\D/g, "") === "91") {
+    signals.push("phone_country_code");
+  }
+  if (city && INDIA_PLACE_RE.test(city)) signals.push("city");
+  if (INDIA_PHONE_RE.test(bio)) signals.push("bio_phone");
+  if (INDIC_SCRIPT_RE.test(bio) || INDIC_SCRIPT_RE.test(name)) signals.push("indic_script");
+  if (INDIA_WORD_RE.test(bio)) signals.push("bio_india");
+  if (INDIA_PLACE_RE.test(bio)) signals.push("bio_place");
+  if (INDIA_MONEY_RE.test(bio)) signals.push("bio_money");
+
+  const host = (url.match(/^https?:\/\/([^/?#]+)/i) || [])[1] || "";
+  if (/\.in$/i.test(host.replace(/:\d+$/, ""))) signals.push("in_domain");
+
+  const strong = signals.filter((signal) => !INDIA_WEAK_SIGNALS.has(signal)).length;
+  return {
+    india: strong >= 1 || signals.length >= 2 ? "yes" : "unknown",
+    india_signals: signals,
+  };
+}
 // Request budget for the enrichment pass. It is one request per candidate, so an
 // unbounded pass on a 5000-candidate run is exactly the storm this project refuses to
 // make. Anything past the cap is reported, not silently dropped.
@@ -323,6 +438,9 @@ function mergeDiscoverCandidate(existing, incoming) {
     biography: pick("biography"),
     category: pick("category"),
     external_url: pick("external_url"),
+    // Only /info/ ever supplies these, so on a merge they are almost always the new half.
+    city_name: pick("city_name"),
+    phone_country_code: pick("phone_country_code"),
     followers: num("followers"),
     following: num("following"),
     posts_count: num("posts_count"),
@@ -339,7 +457,20 @@ function buildDiscoverEnrichQueue(state) {
   const rows = Object.values(state.candidates || {}).filter(
     (row) => row.keep && !row.enriched && row.followers == null
   );
-  rows.sort((a, b) => (b.score == null ? -1 : b.score) - (a.score == null ? -1 : a.score));
+  // Best-scored first, and — when the run asked for Indian creators — anything already
+  // showing India evidence ahead of anything that does not. The detail pass is the scarcest
+  // resource in a run (one request per candidate, hard-capped), so spending it on the
+  // candidates most likely to survive the final filter is worth the extra comparison. Most
+  // rows are "unknown" at this point, so this only ever promotes; nothing is demoted for
+  // lacking evidence.
+  const indiaFirst = !!state.indiaOnly;
+  rows.sort((a, b) => {
+    if (indiaFirst) {
+      const byIndia = (b.india === "yes" ? 1 : 0) - (a.india === "yes" ? 1 : 0);
+      if (byIndia) return byIndia;
+    }
+    return (b.score == null ? -1 : b.score) - (a.score == null ? -1 : a.score);
+  });
   const slice = rows.slice(0, DISCOVER_MAX_ENRICH);
   return {
     tasks: slice.map((row) => ({
@@ -353,8 +484,47 @@ function buildDiscoverEnrichQueue(state) {
   };
 }
 
-function countDiscoverKept(candidates) {
-  return Object.values(candidates || {}).filter((row) => row.keep).length;
+// The delivery filter, deliberately separate from `keep`. `keep` answers "is this worth
+// looking at" and is generous on purpose — an unmeasured account is not evidence against
+// itself, so it stays. This answers the narrower question a file has to be able to promise:
+// did we actually *measure* this account, and was it inside the band the user asked for.
+// A null follower count fails that promise without being a rejection, so such a row is
+// absent here and still present in kept_handles and in candidates.
+function inBandDiscoverRows(rows, minFollowers, maxFollowers) {
+  const min = typeof minFollowers === "number" ? minFollowers : 0;
+  const max = typeof maxFollowers === "number" ? maxFollowers : Infinity;
+  return (rows || []).filter(
+    (row) =>
+      row &&
+      row.keep &&
+      typeof row.followers === "number" &&
+      row.followers >= min &&
+      row.followers <= max
+  );
+}
+
+// The list an overnight run actually exists to produce: kept, measured, inside the band,
+// and with real evidence of being Indian. Layered on inBandDiscoverRows so the two filters
+// can never drift apart, and narrower than either — an account missing any one of the four
+// is absent here and still fully present in the file.
+function indiaInBandDiscoverRows(rows, minFollowers, maxFollowers) {
+  return inBandDiscoverRows(rows, minFollowers, maxFollowers).filter(
+    (row) => row.india === "yes"
+  );
+}
+
+// All three delivery counts in one pass, recounted rather than incremented: enrichment can
+// flip any of them in either direction, so a running tally would drift away from what the
+// file actually contains. The panel shows all three side by side because the gaps between
+// them are the honest picture of a run — kept is "worth a look", in-band is "measured", and
+// india-in-band is what the run was asked for.
+function countDiscoverDelivery(candidates, minFollowers, maxFollowers) {
+  const rows = Object.values(candidates || {});
+  return {
+    kept: rows.filter((row) => row && row.keep).length,
+    inBand: inBandDiscoverRows(rows, minFollowers, maxFollowers).length,
+    indiaInBand: indiaInBandDiscoverRows(rows, minFollowers, maxFollowers).length,
+  };
 }
 
 // ------------------------------------------------------------------- run-state controls
@@ -446,6 +616,8 @@ function buildDiscoverJson(state, options) {
         chaining_enabled: state.useChaining,
         enrich_enabled: state.enrich,
         excluded_handles: state.excludeHandles.length,
+        india_only: !!state.indiaOnly,
+        unattended: !!state.unattended,
       },
       runaway_guard_hit: state.capped,
       sources_disabled: state.deadSources,
@@ -454,6 +626,24 @@ function buildDiscoverJson(state, options) {
       // The one line most users actually want: paste straight into the Instagram profiles
       // tab.
       kept_handles: rows.filter((row) => row.keep).map((row) => row.handle),
+      // Stricter than kept_handles: kept AND measured AND inside the band. kept_handles is
+      // generous by design and therefore carries accounts nobody could measure; this is the
+      // list that can honestly be described as "inside the follower band you set". It comes
+      // back short — or empty — when the detail pass did not run, and that is the true
+      // answer rather than a fault: without the detail pass almost nothing has a follower
+      // count to check.
+      in_band_handles: inBandDiscoverRows(rows, state.minFollowers, state.maxFollowers).map(
+        (row) => row.handle
+      ),
+      // Narrowest of the three, and the one an overnight India run is actually for: kept,
+      // measured, inside the band, and carrying positive evidence of being Indian. Each
+      // row's own `india_signals` says which evidence, so this list can be argued with
+      // rather than taken on faith.
+      india_in_band_handles: indiaInBandDiscoverRows(
+        rows,
+        state.minFollowers,
+        state.maxFollowers
+      ).map((row) => row.handle),
     },
     null,
     2
@@ -474,11 +664,22 @@ async function saveDiscoverFile(state, options) {
 
 async function finishDiscoverRun(reason) {
   await chrome.alarms.clear(DISCOVER_ALARM);
+  await chrome.alarms.clear(DISCOVER_WATCHDOG_ALARM);
   const state = await setDiscoverState({ phase: "downloading" });
   const result = await saveDiscoverFile(state, { complete: !state.capped, reason });
 
   chrome.action.setBadgeText({ text: result.ok ? "✓" : "⚠" });
   chrome.action.setBadgeBackgroundColor({ color: result.ok ? "#188038" : "#d93025" });
+
+  // All three counts, because the gaps between them are the honest summary of a run: kept
+  // is what is worth a look, in-band is what could actually be measured against the band,
+  // and india-in-band is what was asked for. Reporting only the last would hide how much
+  // of the run went unmeasured.
+  const counts = countDiscoverDelivery(
+    state.candidates,
+    state.minFollowers,
+    state.maxFollowers
+  );
 
   await setDiscoverState({
     status: "done",
@@ -487,8 +688,12 @@ async function finishDiscoverRun(reason) {
     activeBatch: [],
     lastEvent: result.ok
       ? "Ho gaya — " +
-        state.totals.kept +
-        " creator handle mile (" +
+        counts.kept +
+        " creator-jaise, " +
+        counts.inBand +
+        " band ke andar naape hue, " +
+        counts.indiaInBand +
+        " unme India wale (" +
         state.totals.candidates +
         " total dekhe), file download ho gayi"
       : "Discovery poori hui par file save nahi hui — " + result.error,
@@ -663,6 +868,9 @@ async function startDiscoverRun(msg) {
   const minFollowers = Math.max(0, Number(msg.minFollowers) || 0);
   const maxFollowers = Math.max(minFollowers + 1, Number(msg.maxFollowers) || 1000000);
 
+  const unattended = msg.unattended === true;
+  const runHours = Math.max(1, Math.min(DISCOVER_MAX_RUN_HOURS, Number(msg.runHours) || 8));
+
   const fresh = {
     ...defaultDiscoverState(),
     status: "running",
@@ -679,10 +887,23 @@ async function startDiscoverRun(msg) {
     excludeHandles,
     downloadFolder: safeDownloadFolder(msg.downloadFolder),
     owner: msg.owner || null,
+    indiaOnly: msg.indiaOnly === true,
+    unattended,
+    // Stored as an absolute timestamp rather than a duration to count down. Alarms are
+    // missed while the laptop sleeps, so anything that counted ticks would drift past
+    // morning by however long the machine was off.
+    deadlineTs: unattended ? Date.now() + runHours * 60 * 60 * 1000 : 0,
     queue: tasks,
     plannedTaskKeys: tasks.map((task) => task.key),
     seenHandles: excludeHandles.slice(),
-    totals: { tasksDone: 0, tasksPlanned: tasks.length, candidates: 0, kept: 0 },
+    totals: {
+      tasksDone: 0,
+      tasksPlanned: tasks.length,
+      candidates: 0,
+      kept: 0,
+      inBand: 0,
+      indiaInBand: 0,
+    },
     lastEvent:
       "Start: " +
       tasks.length +
@@ -690,12 +911,15 @@ async function startDiscoverRun(msg) {
       (skipped ? " (" + skipped + " line skip ki)" : "") +
       ", depth " +
       maxDepth +
-      (excludeHandles.length ? ", " + excludeHandles.length + " handle exclude" : ""),
+      (excludeHandles.length ? ", " + excludeHandles.length + " handle exclude" : "") +
+      (msg.indiaOnly === true ? ", sirf India" : "") +
+      (unattended ? ", raat bhar mode (" + runHours + "h)" : ""),
     updatedAt: Date.now(),
   };
   fresh.log = [fresh.lastEvent];
   await chrome.storage.local.set({ [DISCOVER_STATE_KEY]: fresh });
 
+  if (unattended) armDiscoverWatchdog();
   await pumpDiscoverBatch();
 
   const state = await getDiscoverState();
@@ -730,12 +954,18 @@ async function resumeDiscoverRun() {
     pauseReason: "",
     lastEvent: "Resume — " + (state.queue.length + state.activeBatch.length) + " task baaki",
   });
+  // Re-armed rather than assumed: a manual Resume can follow a stop, a browser restart or
+  // a pause the watchdog gave up on, and in all three the periodic alarm is gone.
+  if (state.unattended) armDiscoverWatchdog();
   await pumpDiscoverBatch();
 }
 
 async function stopDiscoverRun() {
   const state = await getDiscoverState();
   await chrome.alarms.clear(DISCOVER_ALARM);
+  // Stop is a person saying stop. The watchdog does not get to overrule that, so it is
+  // disarmed here rather than left to notice the status change on its next tick.
+  await chrome.alarms.clear(DISCOVER_WATCHDOG_ALARM);
   chrome.notifications.clear(DISCOVER_NOTIF_ID);
   chrome.action.setBadgeText({ text: "" });
   await signalDiscoverStop(state.tabId);
@@ -753,6 +983,7 @@ async function stopDiscoverRun() {
 async function resetDiscoverRun() {
   const state = await getDiscoverState();
   await chrome.alarms.clear(DISCOVER_ALARM);
+  await chrome.alarms.clear(DISCOVER_WATCHDOG_ALARM);
   chrome.notifications.clear(DISCOVER_NOTIF_ID);
   chrome.action.setBadgeText({ text: "" });
   await signalDiscoverStop(state.tabId);
@@ -772,6 +1003,108 @@ async function downloadDiscoverPartial() {
   await setDiscoverState({
     lastEvent: result.ok ? "Partial file download ho gayi" : "Download fail hua — " + result.error,
   });
+}
+
+// ------------------------------------------------------------------ unattended watchdog
+
+// How long a live batch may go quiet before it is presumed dead. It has to clear the
+// longest *legitimate* silence comfortably: one chain task can be two paced requests, and
+// a slow response adds network on top of that.
+function discoverStallMs(state) {
+  return Math.max(6 * 60 * 1000, (state.stepDelaySec || 4) * 8 * 1000);
+}
+
+function armDiscoverWatchdog() {
+  chrome.alarms.create(DISCOVER_WATCHDOG_ALARM, {
+    delayInMinutes: DISCOVER_WATCHDOG_MINUTES,
+    periodInMinutes: DISCOVER_WATCHDOG_MINUTES,
+  });
+}
+
+// The supervisor for an unattended run, and the only place this project acts on a stopped
+// run without a human. It keeps no memory of its own: every tick re-derives what the run
+// needs from the stored state, so a tick that never fired — laptop asleep, Chrome
+// suspended — costs nothing, and the next one sees the same situation and handles it.
+//
+// Everything it does is something the user would have done by hand at 3am if they were
+// awake. What it will not do is get past a block: a login wall, a 403 and a checkpoint all
+// still sit there until a person deals with them.
+async function runDiscoverWatchdog() {
+  const state = await getDiscoverState();
+
+  if (!state.unattended || !discoverStatusIsActive(state.status)) {
+    await chrome.alarms.clear(DISCOVER_WATCHDOG_ALARM);
+    return;
+  }
+
+  // 1. The deadline, checked first because "stop by morning" has to beat every recovery
+  // below it. A run still limping along at 9am is worse than one that saved and stopped
+  // at 7 — and the file only exists once the run finishes.
+  if (state.deadlineTs && Date.now() >= state.deadlineTs) {
+    await chrome.alarms.clear(DISCOVER_WATCHDOG_ALARM);
+    await signalDiscoverStop(state.tabId);
+    await setDiscoverState({
+      lastEvent: "Raat wala time poora — file save karke band kar rahe hain",
+    });
+    await finishDiscoverRun("deadline");
+    return;
+  }
+
+  // 2. A rate limit that has served its full cool-down. The one pause reason that is ever
+  // resumed automatically, because waiting a block out is what a human would have done
+  // anyway; see DISCOVER_MAX_AUTO_RESUMES for why the other reasons are excluded.
+  if (state.status === "paused") {
+    if (state.pauseReason !== "rate_limit") return;
+    if (Date.now() < state.backoffUntilTs) return;
+    const used = state.autoResumesUsed || 0;
+    if (used >= DISCOVER_MAX_AUTO_RESUMES) return;
+    await setDiscoverState({
+      autoResumesUsed: used + 1,
+      lastEvent:
+        "Rate-limit cool-down poora — apne aap resume (" +
+        (used + 1) +
+        "/" +
+        DISCOVER_MAX_AUTO_RESUMES +
+        ")",
+    });
+    await resumeDiscoverRun();
+    return;
+  }
+
+  // 3. A batch that stopped talking. Chrome discards a background tab under memory
+  // pressure and the injected loop dies with it — no error, no onRemoved, nothing reported,
+  // and the run sits at "running" until morning. Waiting longer never fixes it, so the
+  // unreported tasks go back on the queue and the batch starts again. That is redoing work
+  // which never happened, which is a different thing from retrying around a block.
+  const idleMs = Date.now() - (state.updatedAt || 0);
+  const stalled =
+    (state.status === "running" && idleMs > discoverStallMs(state)) ||
+    (state.status === "waiting_delay" &&
+      idleMs > Math.max(discoverStallMs(state), (state.batchDelaySec || 10) * 3000));
+  if (!stalled) return;
+
+  if ((state.stallRecoveries || 0) >= DISCOVER_MAX_STALL_RECOVERIES) {
+    await enterDiscoverPause(
+      "stalled",
+      "Batch baar-baar chup ho ja raha hai (" +
+        DISCOVER_MAX_STALL_RECOVERIES +
+        " baar restart kiya). Tab check karke Resume dabao."
+    );
+    return;
+  }
+
+  await setDiscoverState({
+    status: "running",
+    stallRecoveries: (state.stallRecoveries || 0) + 1,
+    pendingInject: false,
+    queue: [...(state.activeBatch || []), ...(state.queue || [])],
+    activeBatch: [],
+    lastEvent:
+      "Batch " +
+      Math.round(idleMs / 60000) +
+      " min se chup tha (tab discard ya crash) — dobara chala rahe hain",
+  });
+  await pumpDiscoverBatch();
 }
 
 // ------------------------------------------------------ content-script report handlers
@@ -802,11 +1135,17 @@ async function handleDiscoverTaskDone(msg) {
     if (existing && incoming) {
       const merged = mergeDiscoverCandidate(existing, incoming);
       const scored = scoreDiscoverCandidate(merged, scoreOpts);
+      // Re-run rather than carried over. /info/ is usually the first place a bio, a city or
+      // a phone country code appears at all, so an account the listing left "unknown" is
+      // very often decidable now — which is most of what this second pass is buying.
+      const located = detectIndiaSignals(merged);
       candidates[finishedTask.handle] = {
         ...merged,
         score: scored.score,
         score_known_weight: scored.known,
         signals: scored.signals,
+        india: located.india,
+        india_signals: located.india_signals,
         keep: keepDiscoverCandidate(merged, scored, DISCOVER_KEEP_THRESHOLD),
         enriched: true,
       };
@@ -814,7 +1153,8 @@ async function handleDiscoverTaskDone(msg) {
         "@" +
         finishedTask.handle +
         " detail mili — score " +
-        (scored.score == null ? "?" : scored.score);
+        (scored.score == null ? "?" : scored.score) +
+        (located.india === "yes" ? ", India ✓" : "");
     } else {
       // The candidate keeps whatever the listing gave it; `enriched` stays false so the
       // file says plainly that this row was never filled in.
@@ -828,7 +1168,7 @@ async function handleDiscoverTaskDone(msg) {
       totals: {
         ...state.totals,
         tasksDone: state.totals.tasksDone + 1,
-        kept: countDiscoverKept(candidates),
+        ...countDiscoverDelivery(candidates, state.minFollowers, state.maxFollowers),
       },
       lastEvent: note,
     });
@@ -859,6 +1199,10 @@ async function handleDiscoverTaskDone(msg) {
     seen.add(handle);
     const scored = scoreDiscoverCandidate(raw, scoreOpts);
     const keep = keepDiscoverCandidate(raw, scored, DISCOVER_KEEP_THRESHOLD);
+    // Usually "unknown" at this point — a chaining record rarely carries a bio, let alone a
+    // city. It is computed anyway because a search or hashtag record sometimes does, and
+    // the enrich pass re-runs it either way.
+    const located = detectIndiaSignals(raw);
 
     const num = (value) => (typeof value === "number" ? value : null);
     const bool = (value) => (typeof value === "boolean" ? value : null);
@@ -877,9 +1221,13 @@ async function handleDiscoverTaskDone(msg) {
       is_business: bool(raw.is_business),
       category: raw.category || null,
       external_url: raw.external_url || null,
+      city_name: raw.city_name || null,
+      phone_country_code: raw.phone_country_code || null,
       score: scored.score,
       score_known_weight: scored.known,
       signals: scored.signals,
+      india: located.india,
+      india_signals: located.india_signals,
       keep,
       enriched: false,
       found_via: finishedTask ? describeTask(finishedTask) : "unknown",
@@ -919,9 +1267,7 @@ async function handleDiscoverTaskDone(msg) {
     tasksDone: state.totals.tasksDone + 1,
     tasksPlanned: planned.size,
     candidates: state.totals.candidates + added,
-    // Recounted rather than incremented: enrichment can flip a candidate's keep decision
-    // either way, so a running tally would drift away from the file's own contents.
-    kept: countDiscoverKept(candidates),
+    ...countDiscoverDelivery(candidates, state.minFollowers, state.maxFollowers),
   };
 
   const label = finishedTask ? describeTask(finishedTask) : msg.taskKey;
@@ -966,22 +1312,35 @@ async function handleDiscoverBatchDone() {
   const state = await getDiscoverState();
   if (!isLiveDiscoverReport(state)) return { ok: false, abort: true };
 
-  if (state.capped) {
+  // A runaway guard stops the *walk*, not the run. Discovery tasks still queued would only
+  // surface candidates there is no room left to store, so they are dropped — but the detail
+  // pass is exactly what turns the candidates already held into ones with a follower count,
+  // and finishing here would hand back a file where almost nothing is measured and the band
+  // filter therefore matches almost nothing. `capped` still lands in the file as
+  // runaway_guard_hit either way, so none of this is hidden.
+  let queue = state.queue || [];
+  if (state.capped && !state.enrichStarted && queue.length) {
+    const dropped = queue.length;
+    queue = [];
     await setDiscoverState({
+      queue,
       lastEvent:
-        state.capped === "max_candidates"
-          ? "Candidate cap (" + state.maxCandidates + ") lag gaya — walk yahin rok rahe hain"
-          : "Task cap (" + DISCOVER_MAX_TASKS + ") lag gaya — walk yahin rok rahe hain",
+        (state.capped === "max_candidates"
+          ? "Candidate cap (" + state.maxCandidates + ")"
+          : "Task cap (" + DISCOVER_MAX_TASKS + ")") +
+        " lag gaya — walk yahin rok rahe hain, " +
+        dropped +
+        " baaki task chhod diye (detail pass phir bhi chalega)",
     });
-    await finishDiscoverRun(state.capped);
-    return { ok: true };
   }
 
-  if (!state.queue.length) {
+  if (!queue.length) {
     // The frontier is drained. If enrichment is on, that is not the end of the run — it is
     // the start of the second pass, which turns thin listing records into scoreable ones.
     if (state.enrich && !state.enrichStarted) {
-      const { tasks, dropped } = buildDiscoverEnrichQueue(state);
+      // Re-read: the block above may have just rewritten the queue.
+      const current = await getDiscoverState();
+      const { tasks, dropped } = buildDiscoverEnrichQueue(current);
       await setDiscoverState({ enrichStarted: true });
       if (tasks.length) {
         await setDiscoverState({
@@ -989,18 +1348,21 @@ async function handleDiscoverBatchDone() {
           phase: "",
           activeBatch: [],
           queue: tasks,
-          totals: { ...state.totals, tasksPlanned: state.totals.tasksPlanned + tasks.length },
+          totals: {
+            ...current.totals,
+            tasksPlanned: current.totals.tasksPlanned + tasks.length,
+          },
           lastEvent:
             "Discovery poori — ab " +
             tasks.length +
             " candidate ki detail nikaal rahe hain" +
             (dropped ? " (" + dropped + " enrich cap ke kaaran chhoot gaye)" : ""),
         });
-        scheduleDiscoverAlarm(state.batchDelaySec);
+        scheduleDiscoverAlarm(current.batchDelaySec);
         return { ok: true };
       }
     }
-    await finishDiscoverRun("queue empty");
+    await finishDiscoverRun(state.capped || "queue empty");
     return { ok: true };
   }
 
@@ -1008,7 +1370,7 @@ async function handleDiscoverBatchDone() {
     status: "waiting_delay",
     phase: "",
     activeBatch: [],
-    lastEvent: "Batch poora — " + state.queue.length + " task baaki, thoda ruk ke aage",
+    lastEvent: "Batch poora — " + queue.length + " task baaki, thoda ruk ke aage",
   });
   scheduleDiscoverAlarm(state.batchDelaySec);
   return { ok: true };
@@ -1116,6 +1478,13 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === DISCOVER_WATCHDOG_ALARM) {
+    // Serialised through the same chain as everything else: the watchdog rewrites the
+    // frontier, and a tick landing in the middle of a task report would otherwise clobber
+    // it — which is exactly the bug the chain exists to prevent.
+    queueDiscoverTask(runDiscoverWatchdog).catch(() => undefined);
+    return;
+  }
   if (alarm.name !== DISCOVER_ALARM) return;
   queueDiscoverTask(async () => {
     const state = await getDiscoverState();
@@ -1129,18 +1498,38 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   queueDiscoverTask(async () => {
     const state = await getDiscoverState();
     if (state.tabId !== tabId) return;
-    if (discoverStatusIsActive(state.status)) {
-      await chrome.alarms.clear(DISCOVER_ALARM);
-      chrome.action.setBadgeText({ text: "" });
+    if (!discoverStatusIsActive(state.status)) return;
+
+    await chrome.alarms.clear(DISCOVER_ALARM);
+
+    // Unattended, a vanished tab is just something to fix. Chrome drops background tabs
+    // under memory pressure and there is nobody awake to press Resume, so the unreported
+    // tasks go back on the queue and a fresh tab is opened. Bounded by the same counter as
+    // a stall, so a tab that cannot stay open does not respawn all night.
+    if (state.unattended && (state.stallRecoveries || 0) < DISCOVER_MAX_STALL_RECOVERIES) {
       await setDiscoverState({
-        status: "stopped",
+        status: "running",
         phase: "",
         pendingInject: false,
         tabId: null,
+        stallRecoveries: (state.stallRecoveries || 0) + 1,
         queue: [...(state.activeBatch || []), ...(state.queue || [])],
         activeBatch: [],
-        lastEvent: "Tab band ho gaya — jo mila woh safe hai, Resume se aage chalega",
+        lastEvent: "Tab band ho gaya — raat wale mode me hain, naya tab khol ke aage chal rahe hain",
       });
+      await pumpDiscoverBatch();
+      return;
     }
+
+    chrome.action.setBadgeText({ text: "" });
+    await setDiscoverState({
+      status: "stopped",
+      phase: "",
+      pendingInject: false,
+      tabId: null,
+      queue: [...(state.activeBatch || []), ...(state.queue || [])],
+      activeBatch: [],
+      lastEvent: "Tab band ho gaya — jo mila woh safe hai, Resume se aage chalega",
+    });
   }).catch(() => undefined);
 });

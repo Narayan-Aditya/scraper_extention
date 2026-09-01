@@ -206,7 +206,8 @@ button {
 #youtubeSection,
 #linkedinSection,
 #discoverSection,
-#briefSection {
+#briefSection,
+#brandsSection {
   display: none;
 }
 
@@ -215,7 +216,8 @@ body.mode-profiles #profileSection,
 body.mode-youtube #youtubeSection,
 body.mode-linkedin #linkedinSection,
 body.mode-discover #discoverSection,
-body.mode-brief #briefSection {
+body.mode-brief #briefSection,
+body.mode-brands #brandsSection {
   display: block;
 }
 

@@ -27,6 +27,9 @@
     <button id="modeBriefBtn" class="mode-btn" data-mode="brief">
       Brief &rarr; creators <span id="briefModeDot" class="mode-dot hidden"></span>
     </button>
+    <button id="modeBrandsBtn" class="mode-btn" data-mode="brands">
+      Brands &rarr; contacts <span id="brandsModeDot" class="mode-dot hidden"></span>
+    </button>
   </div>
 
   <!-- ============================ Google handle finder ============================ -->
@@ -287,7 +290,40 @@
     </div>
     <p class="hint">
       Detail off rakhoge to run tez hoga par zyadatar candidate ka follower count nahi
-      milega — score tab <code>?</code> dikhega, matlab "pata nahi", "bekaar" nahi.
+      milega — score tab <code>?</code> dikhega, matlab "pata nahi", "bekaar" nahi. Follower
+      band aur India, dono isi pass se confirm hote hain, to <b>2K+ Indian</b> chahiye to
+      yeh on hi rakhna.
+    </p>
+
+    <div class="row check">
+      <input id="dcIndiaOnly" type="checkbox" />
+      <label for="dcIndiaOnly">Sirf Indian creators (delivery list me)</label>
+    </div>
+    <p class="hint">
+      India ka faisla sirf <b>positive</b> evidence pe hota hai — bio me +91 / ₹ / Indian
+      script ya koi Indian sheher, ya business record me city/phone country code. Jiska
+      kuch pata na chale wo <code>unknown</code> rehta hai, <i>"India ka nahi"</i> nahi:
+      file me poora rehta hai, bas India wali list me nahi aata. Naam se andaza nahi
+      lagate — wo galat hota hai aur galti kisi asli insaan pe padti hai.
+    </p>
+
+    <div class="row check">
+      <input id="dcUnattended" type="checkbox" />
+      <label for="dcUnattended">Raat bhar mode (bina dekhe chalta rahega)</label>
+    </div>
+    <div class="row hidden" id="dcRunHoursRow">
+      <label for="dcRunHours">Kitne ghante chalana hai</label>
+      <input id="dcRunHours" type="number" min="1" max="14" value="8" />
+    </div>
+    <p class="hint hidden" id="dcUnattendedHint">
+      Time poora hote hi run apne aap file save karke band ho jayega. Beech me
+      <b>rate-limit</b> aaye to poora cool-down wait karke apne aap resume hoga (max 4 baar);
+      tab band/discard ho jaye to naya tab khul jayega. <b>Login wall, 403 ya checkpoint pe
+      kuch auto nahi hota</b> — wo tumhare bina nahi khulte, aur khole bhi nahi jayenge.
+      <br /><br />
+      Laptop charging pe rakho aur sleep off karo (display off theek hai) — sote laptop me
+      Chrome ke alarm chalte hi nahi. <code>chrome://settings/performance</code> me
+      instagram.com ko Memory Saver se exception bana do.
     </p>
     <p id="dcDelayWarning" class="warning hidden">Kam delay = jaldi rate-limit. 4s+ theek hai.</p>
 
@@ -304,7 +340,11 @@
 
     <div class="status">
       <p id="dcStatusLine">Idle</p>
-      <p id="dcTotalsLine">Tasks: 0/0 &middot; candidates: 0 &middot; creator-jaise: 0</p>
+      <p id="dcTotalsLine">
+        Tasks: 0/0 &middot; candidates: 0 &middot; creator-jaise: 0 &middot; band me: 0
+        &middot; India: 0
+      </p>
+      <p id="dcDeadlineLine" class="detail hidden"></p>
     </div>
 
     <ul id="dcTop" class="completed hidden"></ul>
@@ -312,12 +352,20 @@
 
     <div class="actions">
       <button id="dcDownloadBtn" disabled>Download JSON</button>
+      <select id="dcCopyList" title="Kaunsi list copy karni hai">
+        <option value="band">Band ke andar (naape hue)</option>
+        <option value="india_band">India + band ke andar</option>
+        <option value="kept">Sab creator-jaise</option>
+      </select>
       <button id="dcCopyBtn" disabled>Handles copy</button>
       <button id="dcResetBtn" class="danger">Reset</button>
     </div>
     <p class="hint">
       Run poora hote hi <code>ig-discovery_&lt;date&gt;.json</code> apne aap download ho jata
-      hai. <b>Handles copy</b> se sirf chune hue handle clipboard me aa jate hain — unhe
+      hai. Uske andar teen list hoti hain — <code>kept_handles</code> (dekhne layak),
+      <code>in_band_handles</code> (jinke followers <i>naap ke</i> band ke andar nikle) aur
+      <code>india_in_band_handles</code> (unme se jinke India hone ka evidence mila). Jo
+      list <b>Handles copy</b> se chahiye wo bagal wale dropdown se chuno, phir
       <b>Instagram profiles</b> tab me paste karke poora profile+posts export chala lo.
     </p>
     <p class="hint">
@@ -424,6 +472,111 @@
     </p>
   </section>
 
+  <!-- ========================= Brand contact finder ========================= -->
+  <section id="brandsSection">
+    <label for="bcBrands">Brand names (ek per line)</label>
+    <textarea
+      id="bcBrands"
+      rows="5"
+      placeholder="Nykaa&#10;boAt Lifestyle&#10;Mamaearth"
+    ></textarea>
+    <p class="hint">
+      Har brand ke liye: Google &rarr; official website &rarr; uske contact/about page,
+      saath me LinkedIn aur Apollo ke public search results. Sirf wahi data jo public
+      page pe pehle se likha hai.
+    </p>
+
+    <div class="row">
+      <label for="bcRegion">Region hint</label>
+      <input id="bcRegion" type="text" placeholder="India" />
+    </div>
+    <p class="hint">Optional — Google query me jud jata hai, same naam ke doosre desh wale brand hat jate hain.</p>
+
+    <div class="row">
+      <label for="bcSitePages">Website pages / brand</label>
+      <input id="bcSitePages" type="number" min="1" max="8" value="3" />
+    </div>
+    <div class="row">
+      <label for="bcGoogleDelay">Delay between Google searches (s)</label>
+      <input id="bcGoogleDelay" type="number" min="8" value="15" />
+    </div>
+    <div class="row">
+      <label for="bcPageDelay">Delay between website pages (s)</label>
+      <input id="bcPageDelay" type="number" min="2" value="6" />
+    </div>
+    <p id="bcDelayWarning" class="warning hidden">Kam delay = jaldi CAPTCHA. Google ke liye 15s+ rakho.</p>
+
+    <div class="row check">
+      <input id="bcLinkedin" type="checkbox" checked />
+      <label for="bcLinkedin">LinkedIn search se owner / founder ka naam</label>
+    </div>
+    <div class="row check">
+      <input id="bcLeadDb" type="checkbox" checked />
+      <label for="bcLeadDb">Lead databases — Apollo, RocketReach, Lusha, ContactOut, EasyLeadz, CoreSignal</label>
+    </div>
+    <div class="row check">
+      <input id="bcRegistry" type="checkbox" checked />
+      <label for="bcRegistry">Company registry — Zauba, Tofler, IndiaFilings (board of directors)</label>
+    </div>
+    <div class="row check">
+      <input id="bcOwnerOnly" type="checkbox" />
+      <label for="bcOwnerOnly">Sirf owner/director ke contact rakho (info@, reception hata do)</label>
+    </div>
+    <div class="row check">
+      <input id="bcOpenProfiles" type="checkbox" />
+      <label for="bcOpenProfiles">In sites ke page khud bhi kholo</label>
+    </div>
+    <p class="hint">
+      Saare lead databases ek hi Google query me jate hain, alag-alag nahi — warna har brand
+      pe 6 search lagti aur CAPTCHA turant aa jata.
+    </p>
+    <p class="hint">
+      <b>Seedha number kahan se aata hai:</b> in databases ka direct-dial login + paid credit
+      ke peeche hai, woh yahan nahi milega. Inse <i>naam aur designation</i> milta hai. Asli
+      number website ke team/contact page se, registry ke directors table se, ya person ke
+      apne card me likhe <code>tel:</code> se aata hai — aur file me har number ke saath
+      likha hota hai woh kiska hai.
+    </p>
+
+    <div id="bcAccessBanner" class="banner hidden">
+      <p>
+        Brand ki apni website padhne ke liye site access chahiye. Iske bina sirf Google
+        ke snippets milenge — email/phone zyada tar website pe hi hote hain.
+      </p>
+      <button id="bcGrantBtn">Site access do</button>
+    </div>
+
+    <div class="actions">
+      <button id="bcStartBtn">Start</button>
+      <button id="bcStopBtn" class="hidden">Stop run</button>
+    </div>
+
+    <div id="bcPauseBanner" class="banner hidden">
+      <p>Run pause ho gaya hai — neeche wajah dekho, phir Resume dabao.</p>
+      <p id="bcPauseDetail" class="detail"></p>
+      <button id="bcResumeBtn">Resume</button>
+    </div>
+
+    <div class="status">
+      <p id="bcStatusLine">Idle</p>
+      <p id="bcTotalsLine">Brands: 0/0 &middot; owner contact: 0</p>
+    </div>
+
+    <ul id="bcRows" class="completed hidden"></ul>
+    <ul id="bcLog"></ul>
+
+    <div class="actions">
+      <button id="bcJsonBtn" disabled>Download JSON</button>
+      <button id="bcCsvBtn" disabled>Download CSV</button>
+      <button id="bcResetBtn" class="danger">Reset</button>
+    </div>
+    <p class="hint">
+      Run poora hote hi <code>brands_contacts_&lt;date&gt;.json</code> apne aap download ho
+      jati hai. CSV ke pehle columns hi <code>owner_name, owner_title, owner_phone,
+      owner_email</code> hain — aur har claim ka source URL saath me hota hai.
+    </p>
+  </section>
+
   <script src="brief-parse.js"></script>
   <script src="popup.js"></script>
   <script src="popup-profiles.js"></script>
@@ -431,5 +584,6 @@
   <script src="popup-linkedin.js"></script>
   <script src="popup-discover.js"></script>
   <script src="popup-brief.js"></script>
+  <script src="popup-brands.js"></script>
 </body>
 </html>

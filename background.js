@@ -13,6 +13,9 @@ importScripts("background-profiles.js");
 importScripts("background-youtube.js");
 importScripts("background-linkedin.js");
 importScripts("background-discover.js");
+// The brand contact finder is a sixth independent runner. It comes after
+// background-profiles.js because it reuses that file's offscreen download helper.
+importScripts("background-brands.js");
 // Last on purpose: the brief runner drives the discovery and profile runners, so both
 // have to exist in this scope before it is defined.
 importScripts("background-brief.js");

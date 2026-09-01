@@ -8,8 +8,8 @@
 
 const liveUrls = new Set();
 
-function makeObjectUrl(json) {
-  const blob = new Blob([json], { type: "application/json" });
+function makeObjectUrl(json, mime) {
+  const blob = new Blob([json], { type: mime || "application/json" });
   const url = URL.createObjectURL(blob);
   liveUrls.add(url);
   return url;
@@ -32,7 +32,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           sendResponse({ ok: false, error: "empty payload" });
           break;
         }
-        sendResponse({ ok: true, url: makeObjectUrl(msg.json) });
+        sendResponse({ ok: true, url: makeObjectUrl(msg.json, msg.mime) });
         break;
 
       case "OFFSCREEN_REVOKE_URL":

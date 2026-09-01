@@ -321,6 +321,20 @@
       posts_count: numOrNull(node.media_count),
       external_url: node.external_url || null,
       profile_pic_url: node.profile_pic_url || null,
+      // Location-ish fields, UNVERIFIED like everything else from these endpoints and
+      // absent from the listing sources entirely — only /info/ carries them, and only for
+      // professional accounts that actually filled them in. They exist so the worker can
+      // look for *positive* evidence that an account is Indian; a null here means "this
+      // source did not say", never "not Indian".
+      //
+      // The phone *number* is deliberately not carried across. The country code answers
+      // the only question being asked, and the rest is somebody's contact detail that has
+      // no business sitting in an exported candidate list.
+      city_name: typeof node.city_name === "string" ? node.city_name : null,
+      phone_country_code:
+        node.public_phone_country_code == null
+          ? null
+          : String(node.public_phone_country_code),
     };
   }
 

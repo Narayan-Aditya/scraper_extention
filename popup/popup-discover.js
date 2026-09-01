@@ -15,6 +15,13 @@
   const stepDelayEl = document.getElementById("dcStepDelay");
   const batchDelayEl = document.getElementById("dcBatchDelay");
   const enrichEl = document.getElementById("dcEnrich");
+  const indiaOnlyEl = document.getElementById("dcIndiaOnly");
+  const unattendedEl = document.getElementById("dcUnattended");
+  const runHoursEl = document.getElementById("dcRunHours");
+  const runHoursRow = document.getElementById("dcRunHoursRow");
+  const unattendedHintEl = document.getElementById("dcUnattendedHint");
+  const deadlineLineEl = document.getElementById("dcDeadlineLine");
+  const copyListEl = document.getElementById("dcCopyList");
   const delayWarningEl = document.getElementById("dcDelayWarning");
   const startBtn = document.getElementById("dcStartBtn");
   const stopBtn = document.getElementById("dcStopBtn");
@@ -33,6 +40,7 @@
   let seedsEdited = false;
   let settingsEdited = false;
   let countdownTimer = null;
+  let unattendedTimer = null;
   let lastState = null;
 
   // ------------------------------------------------------------------------- rendering
@@ -61,6 +69,23 @@
       return "Ruke hue — " + left + " task baaki";
     }
     return STATUS_LABELS[state.status] || state.status;
+  }
+
+  // Mirrors inBandDiscoverRows()/indiaInBandDiscoverRows() in background-discover.js.
+  // Duplicated rather than shared for the same reason normalizeHandle() is duplicated in
+  // popup-profiles.js — the panel is a separate page from the worker and there is no
+  // bundler here. The worker stays the authority: all three lists are written into the
+  // downloaded file, and the clipboard is only ever a convenience copy of one of them.
+  function deliveryRows(state, which) {
+    const min = state.minFollowers == null ? 0 : state.minFollowers;
+    const max = state.maxFollowers || Infinity;
+    const rows = Object.values(state.candidates || {}).filter((row) => row && row.keep);
+    if (which === "kept") return rows;
+    const inBand = rows.filter(
+      (row) =>
+        typeof row.followers === "number" && row.followers >= min && row.followers <= max
+    );
+    return which === "india_band" ? inBand.filter((row) => row.india === "yes") : inBand;
   }
 
   function formatFollowers(value) {
@@ -96,6 +121,7 @@
         row.handle +
         " · " +
         formatFollowers(row.followers) +
+        (row.india === "yes" ? " · IN" : "") +
         (row.category ? " · " + row.category : "");
       topEl.appendChild(li);
     }
@@ -104,6 +130,42 @@
   function secondsLeft(state) {
     if (state.pauseReason !== "rate_limit" || !state.backoffUntilTs) return 0;
     return Math.max(0, Math.ceil((state.backoffUntilTs - Date.now()) / 1000));
+  }
+
+  // The one line that tells a returning user whether the overnight run is still going and
+  // how much of its window is left. Also surfaces the auto-resume tally: an unattended run
+  // that quietly rode out three rate limits is worth knowing about before starting another.
+  function renderDeadline(state) {
+    const active =
+      state.unattended && state.deadlineTs && state.status !== "done" && state.status !== "idle";
+    deadlineLineEl.classList.toggle("hidden", !active);
+
+    if (active) {
+      const minsLeft = Math.round((state.deadlineTs - Date.now()) / 60000);
+      const left =
+        minsLeft >= 60 ? Math.floor(minsLeft / 60) + "h " + (minsLeft % 60) + "m" : minsLeft + "m";
+      deadlineLineEl.textContent =
+        (minsLeft > 0 ? "Raat bhar mode — " + left + " baaki" : "Raat bhar mode — time poora") +
+        (state.autoResumesUsed ? " · " + state.autoResumesUsed + " auto-resume" : "") +
+        (state.stallRecoveries ? " · " + state.stallRecoveries + " restart" : "");
+    }
+
+    // Nothing else re-renders the panel while a run sits in a long batch delay, so the
+    // countdown would freeze without its own tick.
+    if (active && !unattendedTimer) {
+      unattendedTimer = setInterval(() => {
+        if (lastState) render(lastState);
+      }, 30000);
+    } else if (!active && unattendedTimer) {
+      clearInterval(unattendedTimer);
+      unattendedTimer = null;
+    }
+  }
+
+  function syncUnattendedRows() {
+    const on = unattendedEl.checked;
+    runHoursRow.classList.toggle("hidden", !on);
+    unattendedHintEl.classList.toggle("hidden", !on);
   }
 
   function renderResume(state) {
@@ -151,8 +213,13 @@
       " · candidates: " +
       (totals.candidates || 0) +
       " · creator-jaise: " +
-      (totals.kept || 0);
+      (totals.kept || 0) +
+      " · band me: " +
+      (totals.inBand || 0) +
+      " · India: " +
+      (totals.indiaInBand || 0);
 
+    renderDeadline(state);
     renderTop(state);
 
     logEl.innerHTML = "";
@@ -167,7 +234,9 @@
 
     const hasResults = (totals.candidates || 0) > 0;
     downloadBtn.disabled = !hasResults;
-    copyBtn.disabled = !(totals.kept || 0);
+    // Tied to the list actually selected, so the button is never live for a list that would
+    // copy nothing — an empty India list is a real answer and should look like one.
+    copyBtn.disabled = !deliveryRows(state, copyListEl.value).length;
 
     // Same guard the other modes use: never overwrite what the user is mid-way typing.
     if (!seedsEdited && state.seeds && state.seeds.length) {
@@ -181,6 +250,9 @@
       if (state.stepDelaySec) stepDelayEl.value = state.stepDelaySec;
       if (state.batchDelaySec) batchDelayEl.value = state.batchDelaySec;
       enrichEl.checked = state.enrich !== false;
+      indiaOnlyEl.checked = state.indiaOnly === true;
+      unattendedEl.checked = state.unattended === true;
+      syncUnattendedRows();
     }
 
     renderModeDot(state.status);
@@ -219,11 +291,36 @@
     delayWarningEl.classList.toggle("hidden", Number(stepDelayEl.value) >= 4);
   });
 
-  for (const el of [depthEl, maxCandidatesEl, minFollowersEl, maxFollowersEl, batchDelayEl, enrichEl]) {
+  for (const el of [
+    depthEl,
+    maxCandidatesEl,
+    minFollowersEl,
+    maxFollowersEl,
+    batchDelayEl,
+    enrichEl,
+    runHoursEl,
+  ]) {
     el.addEventListener("input", () => {
       settingsEdited = true;
     });
   }
+
+  unattendedEl.addEventListener("change", () => {
+    settingsEdited = true;
+    syncUnattendedRows();
+  });
+
+  indiaOnlyEl.addEventListener("change", () => {
+    settingsEdited = true;
+    // The dropdown follows the switch: asking for Indian creators and then copying the
+    // all-countries list is never what somebody meant.
+    copyListEl.value = indiaOnlyEl.checked ? "india_band" : "band";
+    if (lastState) render(lastState);
+  });
+
+  copyListEl.addEventListener("change", () => {
+    if (lastState) render(lastState);
+  });
 
   startBtn.addEventListener("click", async () => {
     const seeds = lines(seedsEl.value);
@@ -237,6 +334,19 @@
     if (maxFollowers <= minFollowers) {
       alert("Max followers, min followers se zyada hona chahiye.");
       return;
+    }
+
+    // The one combination that guarantees a wasted night: both the follower band and the
+    // India check need a follower count / bio / city, and only the detail pass fetches
+    // those. Without it the run still works, but the two lists it was started for come back
+    // empty — better to say so now than at 7am.
+    if ((unattendedEl.checked || indiaOnlyEl.checked) && !enrichEl.checked) {
+      const proceed = confirm(
+        "Detail switch off hai.\n\nUske bina zyadatar candidate ka follower count aur bio " +
+          "aata hi nahi, to 'band ke andar' aur 'India' dono list khaali rahengi.\n\n" +
+          "Phir bhi chalayein?"
+      );
+      if (!proceed) return;
     }
 
     seedsEdited = false;
@@ -254,6 +364,9 @@
         stepDelaySec: Number(stepDelayEl.value),
         batchDelaySec: Number(batchDelayEl.value),
         enrich: enrichEl.checked,
+        indiaOnly: indiaOnlyEl.checked,
+        unattended: unattendedEl.checked,
+        runHours: Number(runHoursEl.value),
       })
     );
   });
@@ -272,8 +385,7 @@
 
   copyBtn.addEventListener("click", async () => {
     const state = lastState || (await send({ type: "DISCOVER_GET_STATE" }));
-    const handles = Object.values(state.candidates || {})
-      .filter((row) => row.keep)
+    const handles = deliveryRows(state, copyListEl.value)
       .sort((a, b) => (b.score == null ? -1 : b.score) - (a.score == null ? -1 : a.score))
       .map((row) => "@" + row.handle);
 
@@ -308,6 +420,11 @@
     stepDelayEl.value = 4;
     batchDelayEl.value = 10;
     enrichEl.checked = true;
+    indiaOnlyEl.checked = false;
+    unattendedEl.checked = false;
+    runHoursEl.value = 8;
+    copyListEl.value = "band";
+    syncUnattendedRows();
     delayWarningEl.classList.add("hidden");
     render(state);
   });

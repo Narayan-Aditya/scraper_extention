@@ -24,7 +24,7 @@
 
   // The mode switcher is shared UI and lives here, because this file was the one that
   // introduced it. Each feature still renders only its own dot.
-  const MODES = ["google", "profiles", "youtube", "linkedin", "discover", "brief"];
+  const MODES = ["google", "profiles", "youtube", "linkedin", "discover", "brief", "brands"];
   const modeButtons = {
     google: document.getElementById("modeGoogleBtn"),
     profiles: document.getElementById("modeProfilesBtn"),
@@ -32,6 +32,7 @@
     linkedin: document.getElementById("modeLinkedinBtn"),
     discover: document.getElementById("modeDiscoverBtn"),
     brief: document.getElementById("modeBriefBtn"),
+    brands: document.getElementById("modeBrandsBtn"),
   };
   const googleDot = document.getElementById("googleModeDot");
   const profileDot = document.getElementById("profileModeDot");

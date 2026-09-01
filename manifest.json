@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Insta Handle Finder (Google Search)",
-  "version": "1.2.0",
-  "description": "Campaign brief to creator folder in one run, multi-city site:instagram.com Google search for public handles, Instagram creator discovery via Instagram's own suggestion graph, plus full Instagram profile+posts, YouTube channel+videos and LinkedIn search-post exporters. Pauses on CAPTCHA/rate-limit; never evades.",
+  "version": "1.3.0",
+  "description": "Brand list to contact sheet (public website/LinkedIn/Apollo signals), campaign brief to creator folder in one run, multi-city site:instagram.com Google search for public handles, Instagram creator discovery via Instagram's own suggestion graph, plus full Instagram profile+posts, YouTube channel+videos and LinkedIn search-post exporters. Pauses on CAPTCHA/rate-limit; never evades.",
   "permissions": [
     "tabs",
     "scripting",
@@ -23,8 +23,11 @@
     "https://youtube.com/*",
     "https://m.youtube.com/*",
     "https://www.linkedin.com/*",
-    "https://linkedin.com/*"
+    "https://linkedin.com/*",
+    "https://www.apollo.io/*",
+    "https://apollo.io/*"
   ],
+  "optional_host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
   },
