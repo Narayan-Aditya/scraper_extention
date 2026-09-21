@@ -642,16 +642,14 @@ already does that job properly; discovery hands it a ranked queue.
    | `mumbai food blogger` | Instagram search for that phrase |
 
    A bare word with no prefix is always a **search term**, never a handle —
-   `mumbaifoodblogger` is far more often a phrase somebody typed than an account
-   they meant.
-3. Set the follower band you actually want (default 1K–1M, the micro/mid
-   influencer window), depth, and the caps.
+    `mumbaifoodblogger` is far more often a phrase somebody typed than an account
+    they meant.
+3. Set the follower band you actually want (default 1K–2M, the micro/mid/macro
+   creator window), depth (default 2), and the caps.
 4. Optionally switch on **Sirf Indian creators** and/or **Raat bhar mode** — both
-   have their own sections below. **Start**.
-5. When it finishes, `ig-discovery_<date>.json` downloads by itself. **Handles
-   copy** puts one of three lists on the clipboard — pick which with the dropdown
-   beside it — and you paste that into the **Instagram profiles** tab to export
-   them properly.
+   have their own sections below. Click **Start Discovery**.
+5. When it finishes, `ig-discovery_<date>.json` downloads automatically, or click
+   **Download Discovery JSON** to save the clean dataset.
 
 Depth 0 means "only the seeds". Depth 2 (the default) means seeds → their similar
 accounts → *their* similar accounts. Each level multiplies the request count, so
@@ -663,24 +661,16 @@ Discovery listings answer thin: usually a handle, a name, private/verified, and
 often nothing else. With **detail** on (the default), every kept candidate gets
 one extra request that fills in follower count, category and bio — the three
 signals the score leans on hardest. It roughly doubles the run length and is
-capped at 400 candidates, reported when it bites.
+capped at 400 candidates per batch.
 
-With it off the run is much faster, and most scores come back `?`. That is not a
-low score — see below.
+### Strict Quality Filters (Private & Out-of-Band Drop)
 
-**If you want "2K+ followers" or "Indian creators", leave this on.** Both of
-those filters need data only this pass fetches — a follower count, a bio, a city.
-Without it the run still works, it just cannot confirm either, so both of the
-narrow lists come back empty. The panel asks before starting a run that has one
-of those switches on and detail off.
+* **0% Private Accounts:** Any account flagged as private (`is_private: true`) is immediately dropped at the harvest and frontier stage — it is never chained from and never included in output files.
+* **Follower Band Enforcement:** When an account is measured, any profile with followers `< minFollowers` (e.g. < 1,000) or `> maxFollowers` is strictly rejected and excluded.
 
 ### Sirf Indian creators
 
-Off by default. It is a **delivery-side** filter: it changes which handles the
-run hands over at the end, and nothing else. It never gates `keep` and it never
-gates the walk — most listing records carry no bio, no city and no phone, so
-requiring India evidence to chain from an account would collapse the frontier on
-the very first hop. Geography comes from your seeds; this decides the output.
+It is a **delivery-side** filter: it changes which handles the run hands over at the end, and nothing else. It never gates `keep` and it never gates the walk: most listing records carry no bio, no city and no phone, so requiring India evidence to chain from an account would collapse the frontier on the very first hop. Geography comes from your seeds; this decides the output.
 
 An account is called Indian only on **positive evidence**:
 
@@ -694,22 +684,6 @@ An account is called Indian only on **positive evidence**:
 | An Indian city or state named in the bio | strong | bio |
 | ₹ / "Rs 5000" / "INR" in the bio | weak | bio |
 | Link on a `.in` domain | weak | `external_url` |
-
-One strong signal is enough; two weak ones together are enough; one weak one on
-its own is not. Whichever fired is written into the row as `india_signals`, so
-the verdict can be argued with instead of taken on faith.
-
-**Absence is never a "no".** An account with nothing to go on is `"unknown"`, not
-"not Indian" — it stays in the file in full and simply is not in the India list.
-The same null rule the score uses, for the same reason.
-
-**Names are deliberately not a signal.** Guessing somebody's nationality from
-their name is unreliable and gets individual people wrong, and this list ends up
-in someone's outreach — there is a real person on the other end of a bad guess.
-
-A few place names exist outside India too (there is a Hyderabad in Pakistan,
-Punjab spans the border), so a place match is evidence rather than proof. That is
-why every signal is recorded.
 
 ### Raat bhar mode (unattended runs)
 
@@ -725,85 +699,34 @@ itself:
 | Tab closed, or discarded by Chrome | Re-opens it, re-queues the tasks that had not reported, carries on. Max 20 times. |
 | Batch goes silent (crashed page, discarded tab) | Same recovery, on a 2-minute watchdog. |
 
-The line between the second row and the third is the whole point. Waiting out a
-rate limit is what you would have done yourself; it is patience, not evasion.
-Clicking past a checkpoint would be working around a block, so it is not done —
-awake or asleep.
-
-Practical setup, none of which the extension can do for you:
-
-- **Laptop plugged in, system sleep off** (display off is fine). Chrome is fully
-  suspended while Windows sleeps and alarms do not fire.
-- **`chrome://settings/performance` → let instagram.com be an exception** to
-  Memory Saver, so Chrome does not discard the tab under you. The watchdog
-  recovers from a discard, but not having one is better.
-- **Slow the pacing down.** The defaults (4s / 10s) are tuned for a run you are
-  watching. For hours unattended, 20-30s between requests and 180-300s between
-  batches keeps it near 60-110 requests/hour, which is a very different load on
-  one account than the default is.
-
-**Be honest with yourself about the risk.** Hours of continuous private-API calls
-from one personal logged-in account is the heaviest thing this tool can do, and
-overnight activity is its own signal. The realistic outcomes are escalating
-429s, then a temporary action block, then a checkpoint you have to clear. Do not
-do this from an account you cannot afford to have restricted. Two or three
-shorter evening runs on different seeds get you the same coverage for a fraction
-of the exposure.
-
-### How a candidate is scored
-
-The score is a percentage of the evidence that **actually existed**, not of every
-signal that could have existed:
-
-| Signal | Weight | Best case |
-|---|---|---|
-| Follower band | 35 | inside the band you set |
-| Private account | 20 | public |
-| Category | 20 | matches creator words (creator, blogger, artist, photographer…) |
-| Follower/following ratio | 15 | ≥ 3 |
-| Bio intent | 15 | collab wording or a contact email |
-| Posts count | 10 | 20+ |
-| Verified | 10 | verified (unverified keeps most of the credit — it is normal for a micro creator) |
-| Bio link | 10 | present |
-
-**A signal the source did not supply is left out of the sum entirely** — it
-neither helps nor hurts. So a candidate nobody could measure scores `null`,
-shown in the panel as `?`, and it is kept rather than dropped: a terse listing is
-not evidence against an account. Scoring a missing follower count as zero would
-bury every account a listing happened to be short about; scoring it as average
-would promote them over accounts that were actually measured. Neither is honest.
-
-Private accounts are the one hard drop — nothing about them can be exported later
-— but they are still saved in the file, flagged, rather than being thrown away.
-
 ### Output format — `ig-discovery_<date>.json`
 
 ```jsonc
 {
-  "generated_at": "2026-08-31T09:12:03.114Z",
+  "generated_at": "2026-09-21T11:12:54.950Z",
   "complete": true,
   "incomplete_reason": null,
-  "seeds": ["mumbai food blogger", "@somecreator"],
+  "seeds": ["@anshukayoga", "#yogaindia"],
   "settings": {
     "max_depth": 2,
-    "max_candidates": 500,
-    "follower_band": [1000, 1000000],
+    "max_candidates": 5000,
+    "follower_band": [1000, 2000000],
     "keep_threshold": 50,
     "chaining_enabled": true,
     "enrich_enabled": true,
-    "excluded_handles": 0,
+    "excluded_handles": 17849,
     "india_only": true,
     "unattended": true
   },
-  "runaway_guard_hit": null,          // or "max_candidates" / "max_tasks"
-  "sources_disabled": [],             // sources that stopped answering mid-run
-  "totals": { "tasksDone": 41, "tasksPlanned": 41, "candidates": 380, "kept": 233 },
+  "runaway_guard_hit": null,
+  "sources_disabled": [],
+  "totals": { "tasksDone": 269, "tasksPlanned": 434, "candidates": 106, "kept": 106 },
   "candidates": [
     {
-      "handle": "somefoodie",
-      "profile_url": "https://www.instagram.com/somefoodie/",
+      "handle": "somecreator",
+      "profile_url": "https://www.instagram.com/somecreator/",
       "user_id": "1234567890",
-      "full_name": "Some Foodie",
+      "full_name": "Some Creator",
       "biography": "DM for collabs",
       "followers": 48200,
       "following": 310,
@@ -812,54 +735,26 @@ Private accounts are the one hard drop — nothing about them can be exported la
       "is_verified": false,
       "is_business": true,
       "category": "Digital creator",
-      "external_url": "https://linktr.ee/somefoodie",
-      "city_name": "Mumbai",          // /info/ only, and only if they filled it in
-      "phone_country_code": "91",     // the code only — never the number itself
-      "score": 86,                    // null means "not enough evidence", never 0
-      "score_known_weight": 125,      // how much evidence that score is based on
+      "external_url": "https://linktr.ee/somecreator",
+      "city_name": "Mumbai",
+      "phone_country_code": "91",
+      "score": 86,
+      "score_known_weight": 125,
       "signals": { "followers": "in_band", "ratio": "high", "category": "creator" },
-      "india": "yes",                 // "yes" or "unknown" — never "no"
-      "india_signals": ["city", "bio_place"],   // why it was called Indian
+      "india": "yes",
+      "india_signals": ["city", "bio_place"],
       "keep": true,
       "enriched": true,
-      "found_via": "@somecreator",    // which seed/step surfaced it
+      "found_via": "@somecreator",
       "found_kind": "chain",
       "depth": 1
     }
   ],
-  "kept_handles": ["somefoodie", "..."],           // paste-ready for mode 2
-  "in_band_handles": ["somefoodie", "..."],        // kept AND measured AND inside the band
-  "india_in_band_handles": ["somefoodie", "..."]   // ...AND evidence of being Indian
+  "handles": ["somecreator", "..."] // Single unified clean list of qualified creator handles
 }
 ```
 
-`candidates` is sorted best-first. Unrated candidates sort below rated ones —
-they are unmeasured, not rejected.
-
-**`kept_handles` vs `in_band_handles`.** They answer different questions and the
-gap between them is the useful part. `keep` is generous on purpose: an account
-nobody could measure is not evidence against itself, so it stays. That means
-`kept_handles` contains accounts with no follower count at all, and accounts the
-other signals carried over the threshold from just outside the band.
-
-`in_band_handles` is the stricter list — kept, **and** it has a real
-`follower_count`, **and** that number is inside the band you set. It is the only
-one of the two you can honestly call "the accounts in my follower range".
-
-It comes back short, or empty, when the **detail switch was off** — without that
-pass almost nothing has a follower count to check, so there is nothing to confirm
-against the band. That is the true answer, not a fault. Nothing is dropped from
-the file either way: every candidate is still in `candidates`, with its
-`followers` either a number or `null`.
-
-`india_in_band_handles` narrows it once more: everything `in_band_handles` asks
-for, plus positive evidence of being Indian. It is the list an overnight India
-run exists to produce.
-
-The three are nested — every handle in the India list is in the band list, and
-every handle in the band list is in the kept list. The panel's finish line reports
-all three counts so you can see the gaps without opening the file, and the
-dropdown beside **Handles copy** chooses which one goes to the clipboard.
+`candidates` contains only qualified, public, and verified in-band creators sorted best-first. `handles` provides the single clean list of handles ready for merging.
 
 ### When it pauses
 

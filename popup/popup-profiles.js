@@ -1,14 +1,20 @@
 // Side panel logic for the Instagram profile exporter, plus the mode switcher.
 //
-// Wrapped in an IIFE on purpose: popup.js runs in the same page and owns a pile of
-// top-level names (render, sendMessage, statusLine, ...). Keeping everything private here
-// means the two features can never clobber each other's globals.
+// Wrapped in an IIFE: keeps all globals scoped and safe.
 
 (function () {
   const accountsEl = document.getElementById("igAccounts");
+  const fileInputEl = document.getElementById("igFileInput");
+  const uploadBtn = document.getElementById("igUploadBtn");
+  const fileLoadedBadge = document.getElementById("igFileLoadedBadge");
+  const skipHistoryEl = document.getElementById("igSkipHistory");
+  const historyCountEl = document.getElementById("igHistoryCount");
+  const clearHistoryBtn = document.getElementById("igClearHistoryBtn");
+  const microBreaksEl = document.getElementById("igMicroBreaks");
+
   const pageDelayEl = document.getElementById("igPageDelay");
   const accountDelayEl = document.getElementById("igAccountDelay");
-  const postLimitEl = document.getElementById("igPostLimit");
+  const startDateEl = document.getElementById("igStartDate");
   const delayWarningEl = document.getElementById("igDelayWarning");
   const startBtn = document.getElementById("igStartBtn");
   const stopBtn = document.getElementById("igStopBtn");
@@ -22,28 +28,24 @@
   const downloadBtn = document.getElementById("igDownloadBtn");
   const resetBtn = document.getElementById("igResetBtn");
 
-  // The mode switcher is shared UI and lives here, because this file was the one that
-  // introduced it. Each feature still renders only its own dot.
-  const MODES = ["google", "profiles", "youtube", "linkedin", "discover", "brief", "brands"];
+  // Mode switcher definitions
+  const MODES = ["profiles", "discover", "brief", "youtube"];
   const modeButtons = {
-    google: document.getElementById("modeGoogleBtn"),
     profiles: document.getElementById("modeProfilesBtn"),
-    youtube: document.getElementById("modeYoutubeBtn"),
-    linkedin: document.getElementById("modeLinkedinBtn"),
     discover: document.getElementById("modeDiscoverBtn"),
     brief: document.getElementById("modeBriefBtn"),
-    brands: document.getElementById("modeBrandsBtn"),
+    youtube: document.getElementById("modeYoutubeBtn"),
   };
-  const googleDot = document.getElementById("googleModeDot");
   const profileDot = document.getElementById("profileModeDot");
-  const youtubeDot = document.getElementById("youtubeModeDot");
-  const linkedinDot = document.getElementById("linkedinModeDot");
   const discoverDot = document.getElementById("discoverModeDot");
+  const briefDot = document.getElementById("briefModeDot");
+  const youtubeDot = document.getElementById("youtubeModeDot");
 
   let accountsEdited = false;
   let settingsEdited = false;
   let countdownTimer = null;
   let lastState = null;
+  let fileAccountsList = null;
 
   // --------------------------------------------------------------------- input parsing
 
@@ -53,9 +55,6 @@
   ]);
   const HANDLE_RE = /^[a-z0-9._]{1,30}$/;
 
-  // Mirrors normalizeProfileHandle() in background-profiles.js. Duplicated rather than
-  // shared because there is no bundler here — the panel needs it for instant feedback,
-  // and the worker re-validates anyway, so a drift can never produce a bad run.
   function normalizeHandle(raw) {
     if (typeof raw !== "string") return null;
     let value = raw.trim();
@@ -85,8 +84,6 @@
     return value;
   }
 
-  // Returns { accounts, skipped } so the user is told what got dropped instead of
-  // silently starting a shorter run than they asked for.
   function parseAccounts(text) {
     const seen = new Set();
     const accounts = [];
@@ -105,15 +102,39 @@
     return { accounts, skipped };
   }
 
-  // Per-account post budget. "MAX" (or an empty box) means the whole account. Returns
-  // undefined for anything we cannot honour, so the caller refuses to start instead of
-  // silently crawling everything when the user meant a small number.
-  function parsePostLimit(raw) {
+  function parseStartDate(raw) {
     const value = String(raw == null ? "" : raw).trim();
-    if (!value || value.toUpperCase() === "MAX") return null; // null = no limit
-    if (!/^\d+$/.test(value)) return undefined;
-    const count = Number(value);
-    return count >= 1 ? count : undefined;
+    if (!value) return null; // null = no date cutoff
+
+    const ddmmyyyy = value.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+    if (ddmmyyyy) {
+      const day = parseInt(ddmmyyyy[1], 10);
+      const month = parseInt(ddmmyyyy[2], 10) - 1;
+      const year = parseInt(ddmmyyyy[3], 10);
+      const d = new Date(year, month, day);
+      if (!isNaN(d.getTime())) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const dt = String(d.getDate()).padStart(2, "0");
+        return `${y}-${m}-${dt}`;
+      }
+    }
+
+    const iso = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (iso) {
+      const d = new Date(value + "T00:00:00");
+      if (!isNaN(d.getTime())) return value;
+    }
+
+    const d = new Date(value);
+    if (!isNaN(d.getTime())) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const dt = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${dt}`;
+    }
+
+    return undefined;
   }
 
   // ------------------------------------------------------------------------- rendering
@@ -128,7 +149,9 @@
   const PHASE_LABELS = {
     resolving: "profile nikaal rahe hain",
     paginating: "posts nikaal rahe hain",
-    downloading: "file save ho rahi hai",
+    banking: "bank ho raha hai",
+    downloading: "ZIP ban rahi hai",
+    micro_break: "☕ safety coffee break",
   };
 
   function statusText(state) {
@@ -146,7 +169,10 @@
     }
     if (state.status === "waiting_delay") {
       const nextHandle = state.accounts[state.accountIndex];
-      return "Ruke hue — agla: @" + (nextHandle || "-");
+      if (state.phase === "micro_break") {
+        return "☕ Coffee Break (Safety Rest) — agla: @" + (nextHandle || "-");
+      }
+      return "Ruke hue (" + (state.accountDelaySec || 4) + "s) — agla: @" + (nextHandle || "-");
     }
     return STATUS_LABELS[state.status] || state.status;
   }
@@ -182,7 +208,6 @@
     resumeBtn.disabled = wait > 0;
     resumeBtn.textContent = wait > 0 ? "Resume (" + wait + "s)" : "Resume";
 
-    // Only tick while a cool-down is actually counting down.
     if (wait > 0 && !countdownTimer) {
       countdownTimer = setInterval(() => {
         if (lastState) renderResume(lastState);
@@ -199,8 +224,6 @@
 
     const running = state.status === "running" || state.status === "waiting_delay";
     const paused = state.status === "paused";
-    // "Stopped" is resumable too — the cursor survived, so offer Resume rather than
-    // making the user re-crawl from the top.
     const resumable = paused || (state.status === "stopped" && !!state.current.handle);
 
     startBtn.disabled = running;
@@ -219,7 +242,11 @@
       (state.accounts ? state.accounts.length : 0) +
       " · posts: " +
       (state.totals ? state.totals.postsFetched : 0) +
-      (state.postLimit ? " · limit " + state.postLimit + "/account" : "");
+      (state.startDate ? " · from " + state.startDate : "");
+
+    if (historyCountEl) {
+      historyCountEl.textContent = (state.historyCount || 0).toLocaleString();
+    }
 
     renderCompleted(state);
 
@@ -233,16 +260,19 @@
         logEl.appendChild(li);
       });
 
-    downloadBtn.disabled = !(state.current && state.current.profile);
+    const hasBanked = !!(state.completedFiles && state.completedFiles.length > 0);
+    const hasCurrent = !!(state.current && state.current.profile);
+    downloadBtn.disabled = !hasBanked && !hasCurrent;
+    const bankedCount = (state.completedFiles ? state.completedFiles.length : 0) + (hasCurrent && !hasBanked ? 1 : 0);
+    downloadBtn.textContent = bankedCount > 0 ? "Download ZIP (" + bankedCount + ")" : "Download ZIP";
 
-    // Same guard popup.js uses: never overwrite what the user is mid-way through typing.
     if (!accountsEdited && state.accounts && state.accounts.length) {
       accountsEl.value = state.accounts.join("\n");
     }
     if (!settingsEdited) {
       if (state.pageDelaySec) pageDelayEl.value = state.pageDelaySec;
       if (state.accountDelaySec) accountDelayEl.value = state.accountDelaySec;
-      postLimitEl.value = state.postLimit ? String(state.postLimit) : "MAX";
+      startDateEl.value = state.startDate || "";
     }
 
     renderModeDot(profileDot, state.status);
@@ -251,10 +281,10 @@
   // ---------------------------------------------------------------------- mode switcher
 
   function applyMode(mode) {
-    const active = MODES.includes(mode) ? mode : "google";
+    const active = MODES.includes(mode) ? mode : "profiles";
     for (const name of MODES) {
       document.body.classList.toggle("mode-" + name, name === active);
-      modeButtons[name].classList.toggle("active", name === active);
+      if (modeButtons[name]) modeButtons[name].classList.toggle("active", name === active);
     }
   }
 
@@ -263,16 +293,17 @@
     chrome.storage.local.set({ uiMode: mode });
   }
 
-  // Keeps a hidden section's run visible in the tab strip, so switching modes never
-  // buries something that is still working or waiting on the user.
   function renderModeDot(dot, status) {
+    if (!dot) return;
     const active = status === "running" || status === "waiting_delay" || status === "paused";
     dot.classList.toggle("hidden", !active);
     dot.classList.toggle("paused", status === "paused");
   }
 
   for (const name of MODES) {
-    modeButtons[name].addEventListener("click", () => setMode(name));
+    if (modeButtons[name]) {
+      modeButtons[name].addEventListener("click", () => setMode(name));
+    }
   }
 
   // --------------------------------------------------------------------------- actions
@@ -283,49 +314,109 @@
 
   accountsEl.addEventListener("input", () => {
     accountsEdited = true;
+    fileAccountsList = null;
+    fileLoadedBadge.classList.add("hidden");
+  });
+
+  uploadBtn.addEventListener("click", () => {
+    fileInputEl.click();
+  });
+
+  fileInputEl.addEventListener("change", async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const { accounts, skipped } = parseAccounts(text);
+      if (!accounts.length) {
+        alert("File me koi valid Instagram handle ya URL nahi mila.");
+        return;
+      }
+
+      fileAccountsList = accounts;
+      accountsEdited = true;
+      fileLoadedBadge.textContent = `${accounts.length.toLocaleString()} handles loaded`;
+      fileLoadedBadge.classList.remove("hidden");
+
+      // Show preview of first 30 in textarea so DOM does not freeze for 14k lines
+      const preview = accounts.slice(0, 30).join("\n");
+      const moreText = accounts.length > 30 ? `\n...aur ${accounts.length - 30} accounts file se loaded hain.` : "";
+      accountsEl.value = preview + moreText;
+    } catch (err) {
+      alert("File read karne me error: " + (err && err.message ? err.message : String(err)));
+    }
+  });
+
+  clearHistoryBtn.addEventListener("click", async () => {
+    const proceed = confirm("Saved scraped history database clear karni hai?");
+    if (!proceed) return;
+    const state = await send({ type: "PROFILE_CLEAR_HISTORY" });
+    render(state);
   });
 
   pageDelayEl.addEventListener("input", () => {
     settingsEdited = true;
-    delayWarningEl.classList.toggle("hidden", Number(pageDelayEl.value) >= 3);
+    delayWarningEl.classList.toggle("hidden", Number(pageDelayEl.value) >= 2);
   });
 
   accountDelayEl.addEventListener("input", () => {
     settingsEdited = true;
   });
 
-  postLimitEl.addEventListener("input", () => {
+  startDateEl.addEventListener("input", () => {
     settingsEdited = true;
   });
 
   startBtn.addEventListener("click", async () => {
-    const { accounts, skipped } = parseAccounts(accountsEl.value);
-    if (!accounts.length) {
+    let rawAccounts = [];
+    if (fileAccountsList && fileAccountsList.length > 0) {
+      rawAccounts = fileAccountsList;
+    } else {
+      const { accounts, skipped } = parseAccounts(accountsEl.value);
+      rawAccounts = accounts;
+      if (skipped) {
+        const proceed = confirm(
+          skipped +
+            " line samajh nahi aayi (post/reel link ya galat format) — woh skip ho jayengi.\n\n" +
+            accounts.length +
+            " account(s) ke saath start karein?"
+        );
+        if (!proceed) return;
+      }
+    }
+
+    if (!rawAccounts.length) {
       alert("Kam se kam ek sahi Instagram profile URL ya handle daalo.");
       return;
     }
-    const postLimit = parsePostLimit(postLimitEl.value);
-    if (postLimit === undefined) {
-      alert('Posts per account me ya to ek number daalo (jaise 50), ya "MAX".');
+
+    const startDate = parseStartDate(startDateEl.value);
+    if (startDate === undefined) {
+      alert("Start date format samajh nahi aayi. Date picker use karein ya YYYY-MM-DD format daalein.");
       return;
     }
-    if (skipped) {
-      const proceed = confirm(
-        skipped +
-          " line samajh nahi aayi (post/reel link ya galat format) — woh skip ho jayengi.\n\n" +
-          accounts.length +
-          " account(s) ke saath start karein?"
-      );
-      if (!proceed) return;
-    }
 
-    const pageDelaySec = Math.max(2, Number(pageDelayEl.value) || 3);
-    const accountDelaySec = Math.max(3, Number(accountDelayEl.value) || 8);
+    const pageDelaySec = Math.max(1, Number(pageDelayEl.value) || 2);
+    const accountDelaySec = Math.max(2, Number(accountDelayEl.value) || 4);
+    const skipHistory = skipHistoryEl ? skipHistoryEl.checked : true;
+    const enableMicroBreaks = microBreaksEl ? microBreaksEl.checked : true;
+
     accountsEdited = false;
     settingsEdited = false;
+    fileAccountsList = null;
+    fileLoadedBadge.classList.add("hidden");
 
     render(
-      await send({ type: "PROFILE_START", accounts, pageDelaySec, accountDelaySec, postLimit })
+      await send({
+        type: "PROFILE_START",
+        accounts: rawAccounts,
+        pageDelaySec,
+        accountDelaySec,
+        startDate,
+        skipHistory,
+        enableMicroBreaks,
+      })
     );
   });
 
@@ -349,10 +440,12 @@
     const state = await send({ type: "PROFILE_RESET" });
     accountsEdited = false;
     settingsEdited = false;
+    fileAccountsList = null;
+    fileLoadedBadge.classList.add("hidden");
     accountsEl.value = "";
-    pageDelayEl.value = 3;
-    accountDelayEl.value = 8;
-    postLimitEl.value = "MAX";
+    pageDelayEl.value = 2;
+    accountDelayEl.value = 4;
+    startDateEl.value = "";
     delayWarningEl.classList.add("hidden");
     render(state);
   });
@@ -362,35 +455,30 @@
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
     if (changes.profileRunState) render(changes.profileRunState.newValue);
-    // The other two features own their sections; only their tab dots are drawn here, so
-    // an active run stays visible while its section is hidden.
-    if (changes.runState && changes.runState.newValue) {
-      renderModeDot(googleDot, changes.runState.newValue.status);
-    }
     if (changes.youtubeRunState && changes.youtubeRunState.newValue) {
       renderModeDot(youtubeDot, changes.youtubeRunState.newValue.status);
     }
-    if (changes.linkedinRunState && changes.linkedinRunState.newValue) {
-      renderModeDot(linkedinDot, changes.linkedinRunState.newValue.status);
-    }
     if (changes.discoverRunState && changes.discoverRunState.newValue) {
       renderModeDot(discoverDot, changes.discoverRunState.newValue.status);
+    }
+    if (changes.briefRunState && changes.briefRunState.newValue) {
+      renderModeDot(briefDot, changes.briefRunState.newValue.status);
     }
   });
 
   (async function init() {
     const stored = await chrome.storage.local.get([
       "uiMode",
-      "runState",
+      "profileRunState",
       "youtubeRunState",
-      "linkedinRunState",
       "discoverRunState",
+      "briefRunState",
     ]);
-    applyMode(stored.uiMode);
-    if (stored.runState) renderModeDot(googleDot, stored.runState.status);
+    const initialMode = MODES.includes(stored.uiMode) ? stored.uiMode : "profiles";
+    applyMode(initialMode);
     if (stored.youtubeRunState) renderModeDot(youtubeDot, stored.youtubeRunState.status);
-    if (stored.linkedinRunState) renderModeDot(linkedinDot, stored.linkedinRunState.status);
     if (stored.discoverRunState) renderModeDot(discoverDot, stored.discoverRunState.status);
+    if (stored.briefRunState) renderModeDot(briefDot, stored.briefRunState.status);
     render(await send({ type: "PROFILE_GET_STATE" }));
   })();
 })();

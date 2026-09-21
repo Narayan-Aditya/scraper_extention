@@ -14,6 +14,8 @@
 
 const PROFILE_STATE_KEY = "profileRunState";
 const PROFILE_SHARD_PREFIX = "igPosts:";
+const PROFILE_FILE_PREFIX = "igFile:";
+const PROFILE_HISTORY_KEY = "scrapedHandlesHistory";
 const PROFILE_ALARM = "profileNextAccount";
 const PROFILE_NOTIF_ID = "profile-pause";
 const OFFSCREEN_PATH = "offscreen.html";
@@ -31,20 +33,48 @@ const PROFILE_IGNORED_HANDLES = new Set([
 ]);
 const PROFILE_HANDLE_RE = /^[a-z0-9._]{1,30}$/;
 
+// ---------------------------------------------------------------------- history helpers
+
+async function getScrapedHistory() {
+  const stored = await chrome.storage.local.get(PROFILE_HISTORY_KEY);
+  return Array.isArray(stored[PROFILE_HISTORY_KEY]) ? stored[PROFILE_HISTORY_KEY] : [];
+}
+
+async function addHandleToHistory(handle) {
+  if (!handle) return;
+  const history = await getScrapedHistory();
+  const lower = handle.toLowerCase();
+  if (!history.includes(lower)) {
+    history.push(lower);
+    await chrome.storage.local.set({ [PROFILE_HISTORY_KEY]: history });
+  }
+}
+
+async function clearScrapedHistory() {
+  await chrome.storage.local.remove(PROFILE_HISTORY_KEY);
+}
+
 // ---------------------------------------------------------------------- state helpers
 
 function defaultProfileState() {
   return {
     status: "idle", // idle | running | waiting_delay | paused | stopped | done
-    phase: "", // "" | resolving | paginating | downloading
+    phase: "", // "" | resolving | paginating | banking | downloading | micro_break
     pauseReason: "",
     accounts: [],
     accountIndex: 0,
     tabId: null,
-    pageDelaySec: 3,
-    accountDelaySec: 8,
+    pageDelaySec: 2,
+    accountDelaySec: 4,
     postLimit: null, // null = MAX: crawl every post of every account
+    startDate: null, // "YYYY-MM-DD" or null: date cutoff filter
     downloadFolder: "", // "" = straight into Downloads
+    enableMicroBreaks: true,
+    microBreakInterval: 50,
+    microBreakDurationSec: 120, // 2 minutes
+    accountsSinceBreak: 0,
+    skipHistory: true,
+    historyCount: 0,
     // Set when another runner (the brief orchestrator) started this run, so it can tell
     // its own sub-run apart from one the user kicked off by hand in the panel.
     owner: null,
@@ -52,6 +82,7 @@ function defaultProfileState() {
     injectToken: 0,
     current: defaultCurrentAccount(""),
     completed: [], // [{ handle, postCount, complete, reason, source }]
+    completedFiles: [], // list of igFile:handle keys banked for ZIP
     retryCount: 0,
     backoffUntilTs: 0,
     totals: { accounts: 0, accountsDone: 0, postsFetched: 0 },
@@ -82,7 +113,10 @@ function defaultCurrentAccount(handle) {
 
 async function getProfileState() {
   const stored = await chrome.storage.local.get(PROFILE_STATE_KEY);
-  return stored[PROFILE_STATE_KEY] || defaultProfileState();
+  const state = stored[PROFILE_STATE_KEY] || defaultProfileState();
+  const history = await getScrapedHistory();
+  state.historyCount = history.length;
+  return state;
 }
 
 async function setProfileState(patch) {
@@ -295,6 +329,33 @@ async function downloadJson(filename, json, mime) {
   }
 }
 
+async function downloadZip(filename, files) {
+  await ensureOffscreenDocument();
+
+  const minted = await chrome.runtime.sendMessage({
+    target: "offscreen",
+    type: "OFFSCREEN_MAKE_ZIP",
+    files,
+  });
+  if (!minted || !minted.ok || !minted.url) {
+    throw new Error((minted && minted.error) || "offscreen document did not return a ZIP URL");
+  }
+
+  try {
+    const downloadId = await chrome.downloads.download({
+      url: minted.url,
+      filename,
+      conflictAction: "uniquify",
+      saveAs: false,
+    });
+    pendingDownloadUrls.set(downloadId, minted.url);
+    return downloadId;
+  } catch (e) {
+    await revokeOffscreenUrl(minted.url);
+    throw e;
+  }
+}
+
 async function revokeOffscreenUrl(url) {
   try {
     await chrome.runtime.sendMessage({ target: "offscreen", type: "OFFSCREEN_REVOKE_URL", url });
@@ -312,6 +373,184 @@ chrome.downloads.onChanged.addListener((delta) => {
   revokeOffscreenUrl(url);
 });
 
+// ----------------------------------------------------------------------- analytics & CSV
+
+function extractContacts(text) {
+  if (!text || typeof text !== "string") return { emails: [], phones: [] };
+
+  const emailMatches = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [];
+  const emails = [...new Set(emailMatches.map((e) => e.toLowerCase()))];
+
+  const phoneMatches = text.match(/(?:\+?\d{1,3}[ -]?)?(?:\(?\d{2,5}\)?[ -]?)?\d{3,5}[ -]?\d{3,5}/g) || [];
+  const cleanPhones = phoneMatches
+    .map((p) => p.trim())
+    .filter((p) => {
+      const digits = p.replace(/\D/g, "");
+      return digits.length >= 8 && digits.length <= 15;
+    });
+  const phones = [...new Set(cleanPhones)];
+
+  return { emails, phones };
+}
+
+function calculateAccountStats(profile, posts) {
+  const postsList = Array.isArray(posts) ? posts : [];
+  let totalLikes = 0;
+  let totalComments = 0;
+  let totalViews = 0;
+  let likesCounted = 0;
+  let commentsCounted = 0;
+  let viewsCounted = 0;
+
+  for (const p of postsList) {
+    if (typeof p.like_count === "number") {
+      totalLikes += p.like_count;
+      likesCounted++;
+    }
+    if (typeof p.comment_count === "number") {
+      totalComments += p.comment_count;
+      commentsCounted++;
+    }
+    if (typeof p.view_count === "number") {
+      totalViews += p.view_count;
+      viewsCounted++;
+    }
+  }
+
+  const avgLikes = likesCounted ? Math.round(totalLikes / likesCounted) : 0;
+  const avgComments = commentsCounted ? Math.round(totalComments / commentsCounted) : 0;
+  const avgViews = viewsCounted ? Math.round(totalViews / viewsCounted) : 0;
+
+  const followers = profile && typeof profile.followers === "number" ? profile.followers : 0;
+  let erPct = 0;
+  if (followers > 0 && (avgLikes > 0 || avgComments > 0)) {
+    erPct = Number((((avgLikes + avgComments) / followers) * 100).toFixed(2));
+  }
+
+  const combinedBioAndCaptions = [
+    (profile && profile.biography) || "",
+    ...postsList.slice(0, 10).map((p) => p.caption || ""),
+  ].join("\n");
+
+  const contacts = extractContacts(combinedBioAndCaptions);
+
+  return {
+    avg_likes: avgLikes,
+    avg_comments: avgComments,
+    avg_views: avgViews,
+    engagement_rate_pct: erPct,
+    emails: contacts.emails,
+    phones: contacts.phones,
+  };
+}
+
+function escapeCsv(val) {
+  if (val == null) return '""';
+  const str = String(val).replace(/"/g, '""');
+  return `"${str}"`;
+}
+
+function generateMasterSummaryCsv(accountPayloads) {
+  const headers = [
+    "Handle",
+    "Full Name",
+    "Followers",
+    "Following",
+    "Reported Posts",
+    "Collected Posts",
+    "Engagement Rate (%)",
+    "Avg Likes",
+    "Avg Comments",
+    "Avg Views",
+    "Email(s)",
+    "Phone(s)",
+    "Is Verified",
+    "Is Business",
+    "Category",
+    "External URL",
+    "Bio",
+    "Profile URL",
+    "Fetched At",
+    "Status",
+  ];
+
+  const rows = [headers.map(escapeCsv).join(",")];
+
+  for (const item of accountPayloads) {
+    const prof = item.profile || {};
+    const stats = item.stats || calculateAccountStats(prof, item.posts);
+
+    const row = [
+      item.handle || prof.username || "",
+      prof.full_name || "",
+      prof.followers != null ? prof.followers : "",
+      prof.following != null ? prof.following : "",
+      prof.posts_count != null ? prof.posts_count : "",
+      item.posts ? item.posts.length : 0,
+      stats.engagement_rate_pct != null ? stats.engagement_rate_pct : "",
+      stats.avg_likes != null ? stats.avg_likes : "",
+      stats.avg_comments != null ? stats.avg_comments : "",
+      stats.avg_views != null ? stats.avg_views : "",
+      (stats.emails || []).join("; "),
+      (stats.phones || []).join("; "),
+      prof.is_verified ? "Yes" : "No",
+      prof.is_business ? "Yes" : "No",
+      prof.category || "",
+      prof.external_url || "",
+      prof.biography || "",
+      item.profile_url || `https://www.instagram.com/${item.handle}/`,
+      item.fetched_at || new Date().toISOString(),
+      item.complete ? "Complete" : item.incomplete_reason || "Partial",
+    ];
+    rows.push(row.map(escapeCsv).join(","));
+  }
+
+  return rows.join("\r\n");
+}
+
+function generateAllPostsCsv(accountPayloads) {
+  const headers = [
+    "Handle",
+    "Post ID",
+    "Shortcode",
+    "Post URL",
+    "Media Type",
+    "Is Video",
+    "Post Date",
+    "Likes",
+    "Comments",
+    "Views",
+    "Caption",
+    "Location",
+  ];
+
+  const rows = [headers.map(escapeCsv).join(",")];
+
+  for (const item of accountPayloads) {
+    const handle = item.handle || (item.profile && item.profile.username) || "";
+    const posts = Array.isArray(item.posts) ? item.posts : [];
+    for (const post of posts) {
+      const row = [
+        handle,
+        post.id || "",
+        post.shortcode || "",
+        post.url || (post.shortcode ? `https://www.instagram.com/p/${post.shortcode}/` : ""),
+        post.media_type || "",
+        post.is_video ? "Yes" : "No",
+        post.taken_at || "",
+        post.like_count != null ? post.like_count : "",
+        post.comment_count != null ? post.comment_count : "",
+        post.view_count != null ? post.view_count : "",
+        post.caption || "",
+        (post.location && post.location.name) || "",
+      ];
+      rows.push(row.map(escapeCsv).join(","));
+    }
+  }
+
+  return rows.join("\r\n");
+}
+
 // ----------------------------------------------------------------------- JSON assembly
 
 async function buildAccountJson(state, options) {
@@ -324,6 +563,8 @@ async function buildAccountJson(state, options) {
   const posts = limit ? collected.slice(0, limit) : collected;
   const complete = !!(options && options.complete);
 
+  const stats = calculateAccountStats(current.profile, posts);
+
   const payload = {
     handle: current.handle,
     profile_url: profileUrlFor(current.handle),
@@ -332,7 +573,9 @@ async function buildAccountJson(state, options) {
     complete,
     incomplete_reason: complete ? null : (options && options.reason) || "incomplete",
     profile: current.profile,
+    stats,
     posts_count_reported: current.profile ? current.profile.posts_count : null,
+    start_date_filter: state.startDate || null,
     post_limit: limit,
     posts_collected: posts.length,
     posts,
@@ -341,9 +584,128 @@ async function buildAccountJson(state, options) {
   return JSON.stringify(payload, null, 2);
 }
 
-// Writes one account's file. Never throws into a caller mid-transition — a download
-// failure becomes a pause the user can act on, with the shards left intact so Resume can
-// try again without re-crawling.
+// Banks one account's complete JSON in local storage so it can be packaged into the
+// batch ZIP file upon crawl completion.
+async function bankAccountFile(state, options) {
+  const handle = state.current.handle;
+  try {
+    const json = await buildAccountJson(state, options);
+    const key = PROFILE_FILE_PREFIX + handle;
+    await chrome.storage.local.set({ [key]: json });
+    return { ok: true, key, filename: safeHandleFilename(handle) };
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+}
+
+async function readAllBankedFiles() {
+  let keys = [];
+  if (typeof chrome.storage.local.getKeys === "function") {
+    const all = await chrome.storage.local.getKeys();
+    keys = all.filter((key) => key.startsWith(PROFILE_FILE_PREFIX));
+  } else {
+    const state = await getProfileState();
+    keys = state.completedFiles || [];
+  }
+  if (!keys.length) return [];
+  const stored = await chrome.storage.local.get(keys);
+  const files = [];
+  for (const key of keys) {
+    const json = stored[key];
+    if (typeof json === "string" && json) {
+      const handle = key.slice(PROFILE_FILE_PREFIX.length);
+      files.push({
+        name: safeHandleFilename(handle),
+        content: json,
+      });
+    }
+  }
+  return files;
+}
+
+async function dropAllBankedFiles() {
+  let keys = [];
+  if (typeof chrome.storage.local.getKeys === "function") {
+    const all = await chrome.storage.local.getKeys();
+    keys = all.filter((key) => key.startsWith(PROFILE_FILE_PREFIX));
+  } else {
+    const state = await getProfileState();
+    keys = state.completedFiles || [];
+  }
+  if (keys.length) {
+    try {
+      await chrome.storage.local.remove(keys);
+    } catch (e) {
+      // Shard/file cleanup error is non-fatal
+    }
+  }
+}
+
+// Generates and downloads a single ZIP archive containing all banked account JSONs + master CSVs.
+async function downloadBatchZip(state) {
+  const files = await readAllBankedFiles();
+
+  // If current account has profile data not yet in banked files (e.g. partial download while in progress), include it
+  if (state.current && state.current.handle && state.current.profile) {
+    const currentName = safeHandleFilename(state.current.handle);
+    const exists = files.some((f) => f.name === currentName);
+    if (!exists) {
+      const currentJson = await buildAccountJson(state, {
+        complete: false,
+        reason: "partial: " + (state.pauseReason || state.status),
+      });
+      files.push({
+        name: currentName,
+        content: currentJson,
+      });
+    }
+  }
+
+  if (!files.length) {
+    return { ok: false, error: "Download karne ke liye koi data nahi mila" };
+  }
+
+  // Parse payloads to generate master summary & all posts CSVs
+  const accountPayloads = [];
+  for (const f of files) {
+    try {
+      const parsed = JSON.parse(f.content);
+      accountPayloads.push(parsed);
+    } catch (e) {}
+  }
+
+  if (accountPayloads.length > 0) {
+    const masterCsv = generateMasterSummaryCsv(accountPayloads);
+    const postsCsv = generateAllPostsCsv(accountPayloads);
+    files.unshift({ name: "all_posts.csv", content: postsCsv });
+    files.unshift({ name: "master_summary.csv", content: masterCsv });
+  }
+
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  const dateStr = `${y}-${m}-${d}`;
+
+  let zipBase = "";
+  const count = accountPayloads.length;
+  if (count === 1 && state.accounts && state.accounts.length === 1) {
+    zipBase = `instagram_${state.accounts[0]}_${dateStr}.zip`;
+  } else {
+    zipBase = `instagram_export_${dateStr}_${count}accounts.zip`;
+  }
+
+  const filename = withDownloadFolder(state.downloadFolder, zipBase);
+
+  try {
+    await downloadZip(filename, files);
+    return { ok: true, filename: zipBase, count };
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+}
+
+// Writes one account's file directly as JSON (legacy fallback).
 async function saveAccountFile(state, options) {
   const handle = state.current.handle;
   try {
@@ -396,12 +758,32 @@ async function finishProfileRun(state) {
   await chrome.alarms.clear(PROFILE_ALARM);
   chrome.action.setBadgeText({ text: "✓" });
   chrome.action.setBadgeBackgroundColor({ color: "#188038" });
+
+  const zipResult = await downloadBatchZip(state);
   const done = state.totals.accountsDone;
+  let lastEvent = "";
+  if (zipResult.ok) {
+    lastEvent =
+      "Sab accounts ho gaye — ZIP download: " +
+      zipResult.filename +
+      " (" +
+      zipResult.count +
+      " accounts)";
+  } else {
+    lastEvent =
+      "Sab accounts check ho gaye (" +
+      done +
+      "/" +
+      state.accounts.length +
+      ") — " +
+      zipResult.error;
+  }
+
   await setProfileState({
     status: "done",
     phase: "",
     pendingInject: false,
-    lastEvent: "Sab accounts ho gaye — " + done + "/" + state.accounts.length + " file(s) download",
+    lastEvent,
   });
 }
 
@@ -424,6 +806,10 @@ async function advanceProfileAccount(state, outcome) {
     accountsDone: state.totals.accountsDone + (outcome.complete ? 1 : 0),
   };
 
+  if (state.current.handle) {
+    await addHandleToHistory(state.current.handle);
+  }
+
   if (accountIndex >= state.accounts.length) {
     const next = await setProfileState({
       completed,
@@ -431,24 +817,51 @@ async function advanceProfileAccount(state, outcome) {
       accountIndex,
       phase: "",
       current: defaultCurrentAccount(""),
+      accountsSinceBreak: 0,
     });
     await finishProfileRun(next);
     return;
   }
 
   const nextHandle = state.accounts[accountIndex];
-  await setProfileState({
-    completed,
-    totals,
-    accountIndex,
-    status: "waiting_delay",
-    phase: "",
-    pauseReason: "",
-    pendingInject: false,
-    current: defaultCurrentAccount(nextHandle),
-    lastEvent: "Agla account: @" + nextHandle,
-  });
-  scheduleProfileAlarm(state.accountDelaySec);
+  const accountsSinceBreak = (state.accountsSinceBreak || 0) + 1;
+  const isMicroBreak = state.enableMicroBreaks && accountsSinceBreak >= (state.microBreakInterval || 50);
+
+  if (isMicroBreak) {
+    const breakSec = state.microBreakDurationSec || 120;
+    await setProfileState({
+      completed,
+      totals,
+      accountIndex,
+      status: "waiting_delay",
+      phase: "micro_break",
+      pauseReason: "",
+      pendingInject: false,
+      accountsSinceBreak: 0,
+      current: defaultCurrentAccount(nextHandle),
+      lastEvent:
+        "☕ Coffee Break (" +
+        Math.round(breakSec / 60) +
+        "m): Safety rest after " +
+        (state.microBreakInterval || 50) +
+        " accounts. Auto-resuming...",
+    });
+    scheduleProfileAlarm(breakSec);
+  } else {
+    await setProfileState({
+      completed,
+      totals,
+      accountIndex,
+      status: "waiting_delay",
+      phase: "",
+      pauseReason: "",
+      pendingInject: false,
+      accountsSinceBreak,
+      current: defaultCurrentAccount(nextHandle),
+      lastEvent: "Agla account: @" + nextHandle,
+    });
+    scheduleProfileAlarm(state.accountDelaySec);
+  }
 }
 
 function scheduleProfileAlarm(baseSeconds) {
@@ -492,6 +905,7 @@ async function injectProfileFetcher(tabId, state) {
     pagesFetched: current.pagesFetched || 0,
     pageDelayMs: Math.max(2, state.pageDelaySec) * 1000,
     postLimit: state.postLimit || null,
+    startDate: state.startDate || null,
     // What this account has already banked, so a resume spends only what is left.
     postsSoFar: current.postsCount || 0,
     runToken: state.injectToken,
@@ -556,6 +970,14 @@ function normalizePostLimit(raw) {
   return Math.floor(value);
 }
 
+function normalizeStartDate(raw) {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const val = raw.trim();
+  const iso = val.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return val;
+  return null;
+}
+
 async function startProfileRun(msg) {
   const accounts = [];
   const seen = new Set();
@@ -580,32 +1002,65 @@ async function startProfileRun(msg) {
     return;
   }
 
+  const skipHistory = msg.skipHistory !== false;
+  let startingAccounts = accounts;
+  let historySkipped = 0;
+  if (skipHistory) {
+    const history = await getScrapedHistory();
+    const historySet = new Set(history);
+    const filtered = startingAccounts.filter((h) => !historySet.has(h.toLowerCase()));
+    historySkipped = startingAccounts.length - filtered.length;
+    startingAccounts = filtered;
+  }
+
+  if (!startingAccounts.length) {
+    await setProfileState({
+      status: "idle",
+      lastEvent:
+        historySkipped > 0
+          ? `Sabhi ${historySkipped} accounts pehle se scrape ho chuke hain (History Guard active)`
+          : "Koi naya valid account nahi mila",
+    });
+    return;
+  }
+
   await chrome.alarms.clear(PROFILE_ALARM);
   chrome.notifications.clear(PROFILE_NOTIF_ID);
   chrome.action.setBadgeText({ text: "" });
   await dropAllPostShards();
+  await dropAllBankedFiles();
 
-  const pageDelaySec = Math.max(2, Number(msg.pageDelaySec) || 3);
-  const accountDelaySec = Math.max(3, Number(msg.accountDelaySec) || 8);
+  const pageDelaySec = Math.max(1, Number(msg.pageDelaySec) || 2);
+  const accountDelaySec = Math.max(2, Number(msg.accountDelaySec) || 4);
   const postLimit = normalizePostLimit(msg.postLimit);
+  const startDate = normalizeStartDate(msg.startDate);
+  const enableMicroBreaks = msg.enableMicroBreaks !== false;
 
   const fresh = {
     ...defaultProfileState(),
     status: "running",
     phase: "resolving",
-    accounts,
+    accounts: startingAccounts,
     pageDelaySec,
     accountDelaySec,
     postLimit,
+    startDate,
+    enableMicroBreaks,
+    skipHistory,
     downloadFolder: safeDownloadFolder(msg.downloadFolder),
     owner: msg.owner || null,
-    current: defaultCurrentAccount(accounts[0]),
-    totals: { accounts: accounts.length, accountsDone: 0, postsFetched: 0 },
+    current: defaultCurrentAccount(startingAccounts[0]),
+    totals: { accounts: startingAccounts.length, accountsDone: 0, postsFetched: 0 },
     lastEvent:
       "Start: @" +
-      accounts[0] +
-      (postLimit ? " (har account se " + postLimit + " posts)" : " (har account ke saare posts)") +
-      (skipped ? " (" + skipped + " line skip ki — sirf profile URL chalega)" : ""),
+      startingAccounts[0] +
+      (startDate
+        ? " (from: " + startDate + ")"
+        : postLimit
+        ? " (" + postLimit + " posts)"
+        : " (saare posts)") +
+      (historySkipped ? " [" + historySkipped + " pehle se scraped skip kiye]" : "") +
+      (skipped ? " [" + skipped + " invalid line skip kiye]" : ""),
     updatedAt: Date.now(),
   };
   fresh.log = [fresh.lastEvent];
@@ -613,7 +1068,7 @@ async function startProfileRun(msg) {
 
   let tabId;
   try {
-    tabId = await openProfileTab(fresh, accounts[0]);
+    tabId = await openProfileTab(fresh, startingAccounts[0]);
   } catch (e) {
     await setProfileState({
       status: "stopped",
@@ -677,23 +1132,17 @@ async function resetProfileRun() {
   chrome.action.setBadgeText({ text: "" });
   await signalContentStop(state.tabId);
   await dropAllPostShards();
+  await dropAllBankedFiles();
   await chrome.storage.local.set({ [PROFILE_STATE_KEY]: defaultProfileState() });
 }
 
-// Lets the user grab whatever the current account has so far, mid-run.
+// Lets the user grab whatever the accounts have so far into a single ZIP, mid-run.
 async function downloadCurrentProfile() {
   const state = await getProfileState();
-  if (!state.current.handle || !state.current.profile) {
-    await setProfileState({ lastEvent: "Abhi kuch download karne layak nahi hai" });
-    return;
-  }
-  const result = await saveAccountFile(state, {
-    complete: false,
-    reason: "partial: " + (state.pauseReason || state.status),
-  });
+  const result = await downloadBatchZip(state);
   await setProfileState({
     lastEvent: result.ok
-      ? "Partial file download: " + safeHandleFilename(state.current.handle)
+      ? "ZIP file download: " + result.filename + " (" + result.count + " accounts)"
       : "Download fail hua — " + result.error,
   });
 }
@@ -708,18 +1157,26 @@ async function handleMeta(msg) {
 
   if (!msg.readable) {
     // Private and not followed: the profile is real data worth keeping, the posts simply
-    // are not reachable. Save what we have and move on rather than pausing the whole run.
+    // are not reachable. Bank what we have and move on rather than pausing the whole run.
     const withProfile = await setProfileState({
       current,
-      phase: "downloading",
+      phase: "banking",
       lastEvent: "@" + current.handle + " private hai — sirf profile save kar rahe hain",
     });
-    const result = await saveAccountFile(withProfile, { complete: false, reason: "private" });
+    const result = await bankAccountFile(withProfile, { complete: false, reason: "private" });
     await dropPostShards(current.shardKeys);
-    const after = await getProfileState();
+    const completedFiles = result.ok
+      ? [...(withProfile.completedFiles || []), result.key]
+      : (withProfile.completedFiles || []);
+    const after = await setProfileState({
+      completedFiles,
+      lastEvent: result.ok
+        ? "Ready for ZIP: @" + current.handle + " (private)"
+        : "@" + current.handle + " save fail: " + result.error,
+    });
     await advanceProfileAccount(after, {
       complete: false,
-      reason: result.ok ? "private" : "private (download fail: " + result.error + ")",
+      reason: result.ok ? "private" : "private (save fail: " + result.error + ")",
     });
     return { ok: true };
   }
@@ -802,23 +1259,30 @@ async function handleDone(msg) {
   const capped = !!msg.capped;
   const limited = !!msg.limited;
   const current = { ...state.current, capped };
+  let limitDetail = "";
+  if (capped) {
+    limitDetail = " (page cap lag gaya, poora nahi hai)";
+  } else if (limited) {
+    if (state.startDate) {
+      limitDetail = " (date filter: " + state.startDate + " tak)";
+    } else if (state.postLimit) {
+      limitDetail = " (aapki " + state.postLimit + " post limit tak)";
+    }
+  }
+
   const withFlag = await setProfileState({
     current,
-    phase: "downloading",
+    phase: "banking",
     lastEvent:
       "@" +
       current.handle +
       " complete — " +
       current.postsCount +
       " posts" +
-      (capped
-        ? " (page cap lag gaya, poora nahi hai)"
-        : limited
-        ? " (aapki " + state.postLimit + " post limit tak)"
-        : ""),
+      limitDetail,
   });
 
-  const result = await saveAccountFile(withFlag, {
+  const result = await bankAccountFile(withFlag, {
     complete: !capped,
     reason: capped ? "hard page cap reached" : null,
   });
@@ -827,14 +1291,18 @@ async function handleDone(msg) {
     // Shards are intentionally left in place so Resume can retry the save without
     // re-crawling the account.
     await enterProfilePause(
-      "download_failed",
-      "@" + current.handle + " ka JSON save nahi hua (" + result.error + ") — Resume se dobara try karo."
+      "bank_failed",
+      "@" + current.handle + " ka data bank nahi hua (" + result.error + ") — Resume se dobara try karo."
     );
     return { ok: false, abort: true };
   }
 
   await dropPostShards(current.shardKeys);
-  await setProfileState({ lastEvent: "Download: " + safeHandleFilename(current.handle) });
+  const completedFiles = [...(withFlag.completedFiles || []), result.key];
+  await setProfileState({
+    completedFiles,
+    lastEvent: "Ready for ZIP: @" + current.handle + " (" + current.postsCount + " posts)",
+  });
 
   const after = await getProfileState();
   await advanceProfileAccount(after, { complete: !capped, reason: capped ? "capped" : null });
@@ -925,6 +1393,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           break;
         case "PROFILE_DOWNLOAD_CURRENT":
           await downloadCurrentProfile();
+          break;
+        case "PROFILE_CLEAR_HISTORY":
+          await clearScrapedHistory();
           break;
         default: // PROFILE_GET_STATE and anything unknown just read the state back
           break;

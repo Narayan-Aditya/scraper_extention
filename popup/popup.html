@@ -1,589 +1,471 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Insta Handle Finder</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Insta & Creator Exporter</title>
   <link rel="stylesheet" href="popup.css" />
 </head>
-<body class="mode-google">
-  <h1>Insta Handle Finder</h1>
+<body class="mode-profiles">
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-brand">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
+            <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path>
+            <line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line>
+          </svg>
+        </div>
+        <div class="brand-info">
+          <h1>Insta Exporter <span class="badge-pro">PRO 2.0</span></h1>
+          <p class="brand-sub">Fast & Safe Data Exporter</p>
+        </div>
+      </div>
+    </header>
 
-  <div class="modes">
-    <button id="modeGoogleBtn" class="mode-btn" data-mode="google">
-      Google handles <span id="googleModeDot" class="mode-dot hidden"></span>
-    </button>
-    <button id="modeProfilesBtn" class="mode-btn" data-mode="profiles">
-      Instagram profiles <span id="profileModeDot" class="mode-dot hidden"></span>
-    </button>
-    <button id="modeYoutubeBtn" class="mode-btn" data-mode="youtube">
-      YouTube channels <span id="youtubeModeDot" class="mode-dot hidden"></span>
-    </button>
-    <button id="modeLinkedinBtn" class="mode-btn" data-mode="linkedin">
-      LinkedIn posts <span id="linkedinModeDot" class="mode-dot hidden"></span>
-    </button>
-    <button id="modeDiscoverBtn" class="mode-btn" data-mode="discover">
-      IG discovery <span id="discoverModeDot" class="mode-dot hidden"></span>
-    </button>
-    <button id="modeBriefBtn" class="mode-btn" data-mode="brief">
-      Brief &rarr; creators <span id="briefModeDot" class="mode-dot hidden"></span>
-    </button>
-    <button id="modeBrandsBtn" class="mode-btn" data-mode="brands">
-      Brands &rarr; contacts <span id="brandsModeDot" class="mode-dot hidden"></span>
-    </button>
+    <!-- Mode Switcher Navigation -->
+    <nav class="mode-nav">
+      <button id="modeProfilesBtn" class="mode-btn active" data-mode="profiles">
+        <span class="btn-text">Profiles</span>
+        <span id="profileModeDot" class="mode-dot hidden"></span>
+      </button>
+      <button id="modeDiscoverBtn" class="mode-btn" data-mode="discover">
+        <span class="btn-text">Discovery</span>
+        <span id="discoverModeDot" class="mode-dot hidden"></span>
+      </button>
+      <button id="modeBriefBtn" class="mode-btn" data-mode="brief">
+        <span class="btn-text">Brief AI</span>
+        <span id="briefModeDot" class="mode-dot hidden"></span>
+      </button>
+      <button id="modeYoutubeBtn" class="mode-btn" data-mode="youtube">
+        <span class="btn-text">YouTube</span>
+        <span id="youtubeModeDot" class="mode-dot hidden"></span>
+      </button>
+    </nav>
+
+    <!-- ========================= Instagram Profile Exporter (PRIMARY) ========================= -->
+    <section id="profileSection" class="feature-section">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Target Handles / URLs</span>
+          <span class="card-subtitle">One per line or file</span>
+        </div>
+        <textarea
+          id="igAccounts"
+          rows="4"
+          placeholder="https://www.instagram.com/natgeo/&#10;@nasa&#10;bbcnews"
+          spellcheck="false"
+        ></textarea>
+        <div class="file-upload-bar">
+          <input type="file" id="igFileInput" accept=".txt,.csv" class="hidden" />
+          <button type="button" id="igUploadBtn" class="btn btn-secondary btn-sm">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+            Upload .txt / .csv (14k+)
+          </button>
+          <span id="igFileLoadedBadge" class="file-loaded-badge hidden">0 handles loaded</span>
+        </div>
+        <p class="field-hint">Profile URLs (@handles) accepted. Post/reel URLs skipped.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Filter & Safety Settings</span>
+        </div>
+
+        <div class="control-group">
+          <div class="field-row">
+            <label for="igStartDate" class="field-label">
+              <span>Scrape from date</span>
+              <span class="tag-opt">Cutoff Filter</span>
+            </label>
+            <input id="igStartDate" type="date" class="input-date" />
+          </div>
+          <p class="field-hint">Is date se lekar aaj tak ke posts fetch honge (purana aate hi agla account). Blank = saare posts.</p>
+        </div>
+
+        <div class="grid-2">
+          <div class="control-group">
+            <label for="igAccountDelay" class="field-label">Account delay (s)</label>
+            <input id="igAccountDelay" type="number" min="2" value="4" class="input-number" />
+            <p class="field-micro">Default: 4s (Fast & Safe)</p>
+          </div>
+          <div class="control-group">
+            <label for="igPageDelay" class="field-label">Page delay (s)</label>
+            <input id="igPageDelay" type="number" min="1" value="2" class="input-number" />
+            <p class="field-micro">Default: 2s</p>
+          </div>
+        </div>
+
+        <div class="checkbox-group mt-2">
+          <label class="checkbox-label">
+            <input id="igSkipHistory" type="checkbox" checked />
+            <span>🛡️ Skip already scraped accounts (History Guard)</span>
+          </label>
+          <div class="history-meta-row">
+            <span class="field-micro">History: <strong id="igHistoryCount">0</strong> accounts saved</span>
+            <button type="button" id="igClearHistoryBtn" class="link-btn">Clear History</button>
+          </div>
+          <label class="checkbox-label mt-1">
+            <input id="igMicroBreaks" type="checkbox" checked />
+            <span>☕ Smart Micro-Breaks (every 50 accounts: 2m safety rest)</span>
+          </label>
+        </div>
+
+        <div class="card-info-box mt-2">
+          <span class="info-badge">PRO ZIP Bundle</span>
+          <p class="field-micro">ZIP includes <b>master_summary.csv</b> (with bio emails, phone/WhatsApp, ER% engagement rate) + <b>all_posts.csv</b> + JSONs.</p>
+        </div>
+
+        <p id="igDelayWarning" class="warning-banner hidden">⚠️ Kam delay = jaldi rate-limit aayega. 2s+ theek hai.</p>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="action-grid">
+        <button id="igStartBtn" class="btn btn-primary">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          Start Export
+        </button>
+        <button id="igStopBtn" class="btn btn-danger hidden">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"></rect></svg>
+          Stop
+        </button>
+      </div>
+
+      <!-- Pause Banner -->
+      <div id="igPauseBanner" class="pause-card hidden">
+        <div class="pause-header">
+          <div class="pulse-amber"></div>
+          <strong>Run Paused — Dhyan Chahiye</strong>
+        </div>
+        <p id="igPauseDetail" class="pause-detail"></p>
+        <button id="igResumeBtn" class="btn btn-warning">Resume</button>
+      </div>
+
+      <!-- Live Status & Stats -->
+      <div class="stats-card">
+        <div class="status-indicator">
+          <span class="status-dot"></span>
+          <span id="igStatusLine" class="status-text">Idle</span>
+        </div>
+        <div class="metrics-row">
+          <div class="metric-box">
+            <span class="metric-label">Progress</span>
+            <span id="igTotalsLine" class="metric-value">Accounts: 0/0 · posts: 0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Completed Chips -->
+      <ul id="igCompleted" class="completed-list hidden"></ul>
+
+      <!-- Console Logs -->
+      <div class="console-box">
+        <div class="console-header">
+          <span>Live Activity Log</span>
+        </div>
+        <ul id="igLog" class="log-stream"></ul>
+      </div>
+
+      <!-- Secondary Controls -->
+      <div class="footer-actions">
+        <button id="igDownloadBtn" class="btn btn-secondary" disabled>Download ZIP</button>
+        <button id="igResetBtn" class="btn btn-ghost-danger">Reset Run</button>
+      </div>
+      <p class="field-hint text-center">Batch khatam hote hi saare accounts ek sath <code>.zip</code> bundle me automatically download ho jate hain.</p>
+    </section>
+
+    <!-- ========================== Instagram Creator Discovery ========================== -->
+    <section id="discoverSection" class="feature-section">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Discovery Seeds</span>
+          <span class="card-subtitle">Keywords / @handles / #tags</span>
+        </div>
+        <textarea
+          id="dcSeeds"
+          rows="4"
+          placeholder="mumbai food blogger&#10;@sometravelcreator&#10;#delhifashionblogger"
+          spellcheck="false"
+        ></textarea>
+        <p class="field-hint"><b>@handle</b> = similar creators | <b>#tag</b> = hashtag creators | <b>text</b> = search query.</p>
+
+        <label for="dcExcludes" class="field-label mt-3">Exclude handles (optional)</label>
+        <textarea id="dcExcludes" rows="2" placeholder="@already_scraped" spellcheck="false"></textarea>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Audience & Crawl Filters</span>
+        </div>
+        <div class="grid-2">
+          <div class="control-group">
+            <label for="dcMinFollowers" class="field-label">Min Followers</label>
+            <input id="dcMinFollowers" type="number" min="0" step="500" value="1000" class="input-number" />
+          </div>
+          <div class="control-group">
+            <label for="dcMaxFollowers" class="field-label">Max Followers</label>
+            <input id="dcMaxFollowers" type="number" min="1000" step="10000" value="1000000" class="input-number" />
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="control-group">
+            <label for="dcDepth" class="field-label">Search Depth</label>
+            <input id="dcDepth" type="number" min="0" max="3" value="2" class="input-number" />
+          </div>
+          <div class="control-group">
+            <label for="dcMaxCandidates" class="field-label">Max Candidates</label>
+            <input id="dcMaxCandidates" type="number" min="50" max="5000" step="50" value="500" class="input-number" />
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="control-group">
+            <label for="dcStepDelay" class="field-label">Request Delay (s)</label>
+            <input id="dcStepDelay" type="number" min="2" value="4" class="input-number" />
+          </div>
+          <div class="control-group">
+            <label for="dcBatchDelay" class="field-label">Batch Delay (s)</label>
+            <input id="dcBatchDelay" type="number" min="5" value="10" class="input-number" />
+          </div>
+        </div>
+
+        <div class="checkbox-group">
+          <label class="checkbox-label">
+            <input id="dcEnrich" type="checkbox" checked />
+            <span>Enrich detail (accurate follower count & score)</span>
+          </label>
+          <label class="checkbox-label">
+            <input id="dcIndiaOnly" type="checkbox" />
+            <span>Sirf Indian creators filter</span>
+          </label>
+          <label class="checkbox-label">
+            <input id="dcUnattended" type="checkbox" />
+            <span>Raat bhar mode (unattended)</span>
+          </label>
+        </div>
+
+        <div class="control-group hidden" id="dcRunHoursRow">
+          <label for="dcRunHours" class="field-label">Kitne ghante chalana hai</label>
+          <input id="dcRunHours" type="number" min="1" max="14" value="8" class="input-number" />
+        </div>
+        <p class="field-hint hidden" id="dcUnattendedHint">Time poora hote hi run auto-save karke band ho jayega. Laptop charging pe rakhein.</p>
+        <p id="dcDelayWarning" class="warning-banner hidden">⚠️ Kam delay = jaldi rate-limit. 4s+ recommended.</p>
+      </div>
+
+      <div class="action-grid">
+        <button id="dcStartBtn" class="btn btn-primary">Start Discovery</button>
+        <button id="dcStopBtn" class="btn btn-danger hidden">Stop</button>
+      </div>
+
+      <div id="dcPauseBanner" class="pause-card hidden">
+        <div class="pause-header">
+          <div class="pulse-amber"></div>
+          <strong>Discovery Paused</strong>
+        </div>
+        <p id="dcPauseDetail" class="pause-detail"></p>
+        <button id="dcResumeBtn" class="btn btn-warning">Resume</button>
+      </div>
+
+      <div class="stats-card">
+        <div class="status-indicator">
+          <span class="status-dot"></span>
+          <span id="dcStatusLine" class="status-text">Idle</span>
+        </div>
+        <p id="dcTotalsLine" class="metric-value">Tasks: 0/0 · Discovered: 0 · Verified Creators: 0 · India: 0</p>
+        <p id="dcDeadlineLine" class="field-micro hidden"></p>
+      </div>
+
+      <ul id="dcTop" class="completed-list hidden"></ul>
+
+      <div class="console-box">
+        <div class="console-header"><span>Discovery Log</span></div>
+        <ul id="dcLog" class="log-stream"></ul>
+      </div>
+
+      <div class="footer-actions">
+        <button id="dcDownloadBtn" class="btn btn-secondary" disabled>Download Discovery JSON</button>
+        <button id="dcResetBtn" class="btn btn-ghost-danger">Reset Run</button>
+      </div>
+    </section>
+
+    <!-- ============================== Campaign Brief =============================== -->
+    <section id="briefSection" class="feature-section">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Campaign Brief Text</span>
+          <span class="card-subtitle">Paste or load file</span>
+        </div>
+        <textarea
+          id="brBriefText"
+          rows="5"
+          placeholder="Brand Name:&#10;Huminity&#10;&#10;Niche:&#10;Fashion, Lifestyle&#10;&#10;Tier:&#10;100K to 500K followers"
+          spellcheck="false"
+        ></textarea>
+        <div class="field-row mt-2">
+          <label for="brFile" class="field-label">Load file:</label>
+          <input id="brFile" type="file" accept=".txt,.md,.markdown,.text,.csv,.json" class="input-file" />
+        </div>
+        <button id="brParseBtn" class="btn btn-secondary mt-3">Brief Analyze Karo</button>
+      </div>
+
+      <div id="brPlan" class="plan-card hidden"></div>
+      <ul id="brWarnings" class="warnlist hidden"></ul>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Search Seeds</span></div>
+        <textarea id="brSeeds" rows="3" placeholder="Analyze Brief — seeds apne aap yahan aayenge" spellcheck="false"></textarea>
+
+        <div class="grid-2 mt-3">
+          <div class="control-group">
+            <label for="brCreators" class="field-label">Creators Needed</label>
+            <input id="brCreators" type="number" min="1" max="50" value="2" class="input-number" />
+          </div>
+          <div class="control-group">
+            <label for="brPosts" class="field-label">Posts / Creator</label>
+            <input id="brPosts" type="text" inputmode="numeric" value="10" class="input-number" />
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="control-group">
+            <label for="brMinFollowers" class="field-label">Min Followers</label>
+            <input id="brMinFollowers" type="number" min="0" step="1000" value="100000" class="input-number" />
+          </div>
+          <div class="control-group">
+            <label for="brMaxFollowers" class="field-label">Max Followers</label>
+            <input id="brMaxFollowers" type="number" min="1000" step="10000" value="500000" class="input-number" />
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="control-group">
+            <label for="brDepth" class="field-label">Depth</label>
+            <input id="brDepth" type="number" min="0" max="3" value="2" class="input-number" />
+          </div>
+          <div class="control-group">
+            <label for="brMaxCandidates" class="field-label">Max Candidates</label>
+            <input id="brMaxCandidates" type="number" min="50" max="5000" step="50" value="500" class="input-number" />
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="control-group">
+            <label for="brDelay" class="field-label">Delay (s)</label>
+            <input id="brDelay" type="number" min="2" value="4" class="input-number" />
+          </div>
+          <div class="control-group">
+            <label for="brFolder" class="field-label">Download Folder</label>
+            <input id="brFolder" type="text" placeholder="brief_campaign_2026" class="input-text" />
+          </div>
+        </div>
+      </div>
+
+      <div class="action-grid">
+        <button id="brStartBtn" class="btn btn-primary">Start Campaign Search</button>
+        <button id="brStopBtn" class="btn btn-danger hidden">Stop</button>
+      </div>
+
+      <div id="brPauseBanner" class="pause-card hidden">
+        <div class="pause-header"><div class="pulse-amber"></div><strong>Campaign Paused</strong></div>
+        <p id="brPauseDetail" class="pause-detail"></p>
+        <button id="brResumeBtn" class="btn btn-warning">Resume</button>
+      </div>
+
+      <div class="stats-card">
+        <div class="status-indicator"><span class="status-dot"></span><span id="brStatusLine" class="status-text">Idle</span></div>
+        <p id="brSubStatus" class="metric-value"></p>
+      </div>
+
+      <ul id="brPicked" class="completed-list hidden"></ul>
+
+      <div class="console-box">
+        <div class="console-header"><span>Campaign Log</span></div>
+        <ul id="brLog" class="log-stream"></ul>
+      </div>
+
+      <div class="footer-actions">
+        <button id="brResetBtn" class="btn btn-ghost-danger">Reset Campaign</button>
+      </div>
+    </section>
+
+    <!-- ========================== YouTube Channel Exporter ========================== -->
+    <section id="youtubeSection" class="feature-section">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">YouTube Channel URLs / @handles</span>
+        </div>
+        <textarea
+          id="ytChannels"
+          rows="4"
+          placeholder="https://www.youtube.com/@mkbhd&#10;@NASA&#10;https://www.youtube.com/channel/UCBJycsmduvYEL83R_U4JriQ"
+          spellcheck="false"
+        ></textarea>
+        <p class="field-hint">Channel URLs only — video/playlist links are skipped.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Extraction Delays</span></div>
+        <div class="grid-2">
+          <div class="control-group">
+            <label for="ytPageDelay" class="field-label">Page delay (s)</label>
+            <input id="ytPageDelay" type="number" min="2" value="3" class="input-number" />
+          </div>
+          <div class="control-group">
+            <label for="ytChannelDelay" class="field-label">Channel delay (s)</label>
+            <input id="ytChannelDelay" type="number" min="3" value="8" class="input-number" />
+          </div>
+        </div>
+        <div class="field-row mt-2">
+          <label for="ytVideoDelay" class="field-label">Video delay (ms)</label>
+          <input id="ytVideoDelay" type="number" min="200" step="100" value="700" class="input-number" />
+        </div>
+        <div class="checkbox-group mt-2">
+          <label class="checkbox-label">
+            <input id="ytFullDetails" type="checkbox" checked />
+            <span>Full video details (likes, comments, description)</span>
+          </label>
+        </div>
+        <p id="ytDelayWarning" class="warning-banner hidden">⚠️ Kam delay = rate-limit. 3s+ theek hai.</p>
+      </div>
+
+      <div class="action-grid">
+        <button id="ytStartBtn" class="btn btn-primary">Start YouTube Export</button>
+        <button id="ytStopBtn" class="btn btn-danger hidden">Stop</button>
+      </div>
+
+      <div id="ytPauseBanner" class="pause-card hidden">
+        <div class="pause-header"><div class="pulse-amber"></div><strong>YouTube Run Paused</strong></div>
+        <p id="ytPauseDetail" class="pause-detail"></p>
+        <button id="ytResumeBtn" class="btn btn-warning">Resume</button>
+      </div>
+
+      <div class="stats-card">
+        <div class="status-indicator"><span class="status-dot"></span><span id="ytStatusLine" class="status-text">Idle</span></div>
+        <p id="ytTotalsLine" class="metric-value">Channels: 0/0 · videos: 0</p>
+      </div>
+
+      <ul id="ytCompleted" class="completed-list hidden"></ul>
+
+      <div class="console-box">
+        <div class="console-header"><span>YouTube Log</span></div>
+        <ul id="ytLog" class="log-stream"></ul>
+      </div>
+
+      <div class="footer-actions">
+        <button id="ytDownloadBtn" class="btn btn-secondary" disabled>Download Partial</button>
+        <button id="ytResetBtn" class="btn btn-ghost-danger">Reset</button>
+      </div>
+    </section>
   </div>
 
-  <!-- ============================ Google handle finder ============================ -->
-  <section id="googleSection">
-    <label for="cities">Cities (one per line)</label>
-    <textarea id="cities" rows="4" placeholder="lucknow&#10;kanpur&#10;varanasi"></textarea>
-
-    <div class="row">
-      <label for="maxPages">Max pages / city</label>
-      <input id="maxPages" type="number" min="1" max="50" value="3" />
-    </div>
-    <div class="row">
-      <label for="delaySec">Delay between pages (s)</label>
-      <input id="delaySec" type="number" min="5" value="10" />
-    </div>
-    <p id="delayWarning" class="warning hidden">Kam delay = jaldi CAPTCHA. 10s+ recommended.</p>
-
-    <div class="actions">
-      <button id="startBtn">Start</button>
-      <button id="stopBtn" class="hidden">Stop run</button>
-    </div>
-
-    <div id="captchaBanner" class="banner hidden">
-      <p>Run pause ho gaya hai — neeche wajah dekho, phir Resume dabao.</p>
-      <p id="pauseDetail" class="detail"></p>
-      <button id="resumeBtn">Resume</button>
-    </div>
-
-    <div class="status">
-      <p id="statusLine">Idle</p>
-      <p id="totalsLine">Total handles: 0</p>
-    </div>
-
-    <ul id="log"></ul>
-
-    <div class="actions">
-      <button id="downloadBtn" disabled>Download JSON</button>
-      <button id="resetBtn" class="danger">Reset</button>
-    </div>
-  </section>
-
-  <!-- ========================= Instagram profile exporter ========================= -->
-  <section id="profileSection">
-    <label for="igAccounts">Instagram profile URLs ya handles (ek per line)</label>
-    <textarea
-      id="igAccounts"
-      rows="4"
-      placeholder="https://www.instagram.com/natgeo/&#10;@nasa&#10;bbcnews"
-    ></textarea>
-    <p class="hint">Sirf profile URL chalega — post/reel/explore links skip ho jayenge.</p>
-
-    <div class="row">
-      <label for="igPostLimit">Posts per account</label>
-      <input id="igPostLimit" type="text" inputmode="numeric" value="MAX" placeholder="MAX" />
-    </div>
-    <p class="hint">Number daalo (jaise 50) — har handle se utne hi latest posts. "MAX" = poora account.</p>
-
-    <div class="row">
-      <label for="igPageDelay">Delay between pages (s)</label>
-      <input id="igPageDelay" type="number" min="2" value="3" />
-    </div>
-    <div class="row">
-      <label for="igAccountDelay">Delay between accounts (s)</label>
-      <input id="igAccountDelay" type="number" min="3" value="8" />
-    </div>
-    <p id="igDelayWarning" class="warning hidden">Kam delay = jaldi rate-limit. 3s+ theek hai.</p>
-
-    <div class="actions">
-      <button id="igStartBtn">Start</button>
-      <button id="igStopBtn" class="hidden">Stop run</button>
-    </div>
-
-    <div id="igPauseBanner" class="banner hidden">
-      <p>Run pause ho gaya hai — neeche wajah dekho, phir Resume dabao.</p>
-      <p id="igPauseDetail" class="detail"></p>
-      <button id="igResumeBtn">Resume</button>
-    </div>
-
-    <div class="status">
-      <p id="igStatusLine">Idle</p>
-      <p id="igTotalsLine">Accounts: 0/0 &middot; posts: 0</p>
-    </div>
-
-    <ul id="igCompleted" class="completed hidden"></ul>
-    <ul id="igLog"></ul>
-
-    <div class="actions">
-      <button id="igDownloadBtn" disabled>Download partial</button>
-      <button id="igResetBtn" class="danger">Reset</button>
-    </div>
-    <p class="hint">
-      Har account complete hote hi uska <code>&lt;handle&gt;.json</code> apne aap download ho
-      jata hai — side panel band ho tab bhi.
-    </p>
-  </section>
-
-  <!-- ========================== YouTube channel exporter ========================== -->
-  <section id="youtubeSection">
-    <label for="ytChannels">YouTube channel URLs ya @handles (ek per line)</label>
-    <textarea
-      id="ytChannels"
-      rows="4"
-      placeholder="https://www.youtube.com/@mkbhd&#10;@NASA&#10;https://www.youtube.com/channel/UCBJycsmduvYEL83R_U4JriQ"
-    ></textarea>
-    <p class="hint">Sirf channel URL chalega — video/playlist links skip ho jayenge.</p>
-
-    <div class="row">
-      <label for="ytPageDelay">Delay between pages (s)</label>
-      <input id="ytPageDelay" type="number" min="2" value="3" />
-    </div>
-    <div class="row">
-      <label for="ytChannelDelay">Delay between channels (s)</label>
-      <input id="ytChannelDelay" type="number" min="3" value="8" />
-    </div>
-    <div class="row">
-      <label for="ytVideoDelay">Delay between videos (ms)</label>
-      <input id="ytVideoDelay" type="number" min="200" step="100" value="700" />
-    </div>
-    <div class="row check">
-      <input id="ytFullDetails" type="checkbox" checked />
-      <label for="ytFullDetails">Har video ki full details (likes, comments, description)</label>
-    </div>
-    <p class="hint">
-      Details off karoge to sirf listing data aayega (url, title, thumbnail, approx views) —
-      bahut tez, par like/comment/description null rahenge.
-    </p>
-    <p id="ytDelayWarning" class="warning hidden">Kam delay = jaldi rate-limit. 3s+ theek hai.</p>
-
-    <div class="actions">
-      <button id="ytStartBtn">Start</button>
-      <button id="ytStopBtn" class="hidden">Stop run</button>
-    </div>
-
-    <div id="ytPauseBanner" class="banner hidden">
-      <p>Run pause ho gaya hai — neeche wajah dekho, phir Resume dabao.</p>
-      <p id="ytPauseDetail" class="detail"></p>
-      <button id="ytResumeBtn">Resume</button>
-    </div>
-
-    <div class="status">
-      <p id="ytStatusLine">Idle</p>
-      <p id="ytTotalsLine">Channels: 0/0 &middot; videos: 0</p>
-    </div>
-
-    <ul id="ytCompleted" class="completed hidden"></ul>
-    <ul id="ytLog"></ul>
-
-    <div class="actions">
-      <button id="ytDownloadBtn" disabled>Download partial</button>
-      <button id="ytResetBtn" class="danger">Reset</button>
-    </div>
-    <p class="hint">
-      Har channel complete hote hi uska <code>&lt;handle&gt;.json</code> apne aap download ho
-      jata hai — side panel band ho tab bhi.
-    </p>
-  </section>
-
-  <!-- ========================= LinkedIn search post exporter ========================= -->
-  <section id="linkedinSection">
-    <label for="liSearches">LinkedIn search URLs (ek per line)</label>
-    <textarea
-      id="liSearches"
-      rows="4"
-      placeholder="https://www.linkedin.com/search/results/content/?keywords=ai%20startup"
-    ></textarea>
-    <p class="hint">
-      Search results ka URL chahiye — LinkedIn pe search karke <b>Posts</b> tab kholo aur
-      address bar se URL copy karo. Profile/job/single-post links skip ho jayenge.
-    </p>
-
-    <div class="row">
-      <label for="liScrollDelay">Delay between scrolls (s)</label>
-      <input id="liScrollDelay" type="number" min="2" value="3" />
-    </div>
-    <div class="row">
-      <label for="liSearchDelay">Delay between searches (s)</label>
-      <input id="liSearchDelay" type="number" min="5" value="10" />
-    </div>
-    <div class="row">
-      <label for="liMaxPosts">Max posts per search (0 = no limit)</label>
-      <input id="liMaxPosts" type="number" min="0" step="50" value="300" />
-    </div>
-    <p id="liDelayWarning" class="warning hidden">Kam delay = jaldi search limit. 3s+ theek hai.</p>
-
-    <div class="actions">
-      <button id="liStartBtn">Start</button>
-      <button id="liStopBtn" class="hidden">Stop run</button>
-    </div>
-
-    <div id="liPauseBanner" class="banner hidden">
-      <p>Run pause ho gaya hai — neeche wajah dekho, phir Resume dabao.</p>
-      <p id="liPauseDetail" class="detail"></p>
-      <button id="liResumeBtn">Resume</button>
-    </div>
-
-    <div class="status">
-      <p id="liStatusLine">Idle</p>
-      <p id="liTotalsLine">Searches: 0/0 &middot; posts: 0</p>
-    </div>
-
-    <ul id="liCompleted" class="completed hidden"></ul>
-    <ul id="liLog"></ul>
-
-    <div class="actions">
-      <button id="liDownloadBtn" disabled>Download partial</button>
-      <button id="liResetBtn" class="danger">Reset</button>
-    </div>
-    <p class="hint">
-      Har search complete hote hi uska <code>linkedin-&lt;keywords&gt;.json</code> apne aap
-      download ho jata hai — side panel band ho tab bhi.
-    </p>
-  </section>
-
-  <!-- ========================== Instagram creator discovery ========================== -->
-  <section id="discoverSection">
-    <label for="dcSeeds">Seeds (ek per line)</label>
-    <textarea
-      id="dcSeeds"
-      rows="4"
-      placeholder="mumbai food blogger&#10;@sometravelcreator&#10;#delhifashionblogger"
-    ></textarea>
-    <p class="hint">
-      Teen tarah ki line chalti hai — <b>@handle</b> ya profile URL = us account jaise
-      accounts dhoondho, <b>#tag</b> = us hashtag ke creators, aur <b>baaki koi bhi text</b>
-      = Instagram search. Bina @ ke likha word hamesha search term mana jayega.
-    </p>
-
-    <label for="dcExcludes">Exclude handles (optional, ek per line)</label>
-    <textarea id="dcExcludes" rows="2" placeholder="@pehle_se_export_kiya"></textarea>
-
-    <div class="row">
-      <label for="dcDepth">Depth (0 = sirf seeds)</label>
-      <input id="dcDepth" type="number" min="0" max="3" value="2" />
-    </div>
-    <div class="row">
-      <label for="dcMaxCandidates">Max candidates</label>
-      <input id="dcMaxCandidates" type="number" min="50" max="5000" step="50" value="500" />
-    </div>
-    <div class="row">
-      <label for="dcMinFollowers">Min followers</label>
-      <input id="dcMinFollowers" type="number" min="0" step="500" value="1000" />
-    </div>
-    <div class="row">
-      <label for="dcMaxFollowers">Max followers</label>
-      <input id="dcMaxFollowers" type="number" min="1000" step="10000" value="1000000" />
-    </div>
-    <div class="row">
-      <label for="dcStepDelay">Delay between requests (s)</label>
-      <input id="dcStepDelay" type="number" min="2" value="4" />
-    </div>
-    <div class="row">
-      <label for="dcBatchDelay">Delay between batches (s)</label>
-      <input id="dcBatchDelay" type="number" min="5" value="10" />
-    </div>
-    <div class="row check">
-      <input id="dcEnrich" type="checkbox" checked />
-      <label for="dcEnrich">Har candidate ki detail bhi nikaalo (slow, par score sahi aata hai)</label>
-    </div>
-    <p class="hint">
-      Detail off rakhoge to run tez hoga par zyadatar candidate ka follower count nahi
-      milega — score tab <code>?</code> dikhega, matlab "pata nahi", "bekaar" nahi. Follower
-      band aur India, dono isi pass se confirm hote hain, to <b>2K+ Indian</b> chahiye to
-      yeh on hi rakhna.
-    </p>
-
-    <div class="row check">
-      <input id="dcIndiaOnly" type="checkbox" />
-      <label for="dcIndiaOnly">Sirf Indian creators (delivery list me)</label>
-    </div>
-    <p class="hint">
-      India ka faisla sirf <b>positive</b> evidence pe hota hai — bio me +91 / ₹ / Indian
-      script ya koi Indian sheher, ya business record me city/phone country code. Jiska
-      kuch pata na chale wo <code>unknown</code> rehta hai, <i>"India ka nahi"</i> nahi:
-      file me poora rehta hai, bas India wali list me nahi aata. Naam se andaza nahi
-      lagate — wo galat hota hai aur galti kisi asli insaan pe padti hai.
-    </p>
-
-    <div class="row check">
-      <input id="dcUnattended" type="checkbox" />
-      <label for="dcUnattended">Raat bhar mode (bina dekhe chalta rahega)</label>
-    </div>
-    <div class="row hidden" id="dcRunHoursRow">
-      <label for="dcRunHours">Kitne ghante chalana hai</label>
-      <input id="dcRunHours" type="number" min="1" max="14" value="8" />
-    </div>
-    <p class="hint hidden" id="dcUnattendedHint">
-      Time poora hote hi run apne aap file save karke band ho jayega. Beech me
-      <b>rate-limit</b> aaye to poora cool-down wait karke apne aap resume hoga (max 4 baar);
-      tab band/discard ho jaye to naya tab khul jayega. <b>Login wall, 403 ya checkpoint pe
-      kuch auto nahi hota</b> — wo tumhare bina nahi khulte, aur khole bhi nahi jayenge.
-      <br /><br />
-      Laptop charging pe rakho aur sleep off karo (display off theek hai) — sote laptop me
-      Chrome ke alarm chalte hi nahi. <code>chrome://settings/performance</code> me
-      instagram.com ko Memory Saver se exception bana do.
-    </p>
-    <p id="dcDelayWarning" class="warning hidden">Kam delay = jaldi rate-limit. 4s+ theek hai.</p>
-
-    <div class="actions">
-      <button id="dcStartBtn">Start</button>
-      <button id="dcStopBtn" class="hidden">Stop run</button>
-    </div>
-
-    <div id="dcPauseBanner" class="banner hidden">
-      <p>Run pause ho gaya hai — neeche wajah dekho, phir Resume dabao.</p>
-      <p id="dcPauseDetail" class="detail"></p>
-      <button id="dcResumeBtn">Resume</button>
-    </div>
-
-    <div class="status">
-      <p id="dcStatusLine">Idle</p>
-      <p id="dcTotalsLine">
-        Tasks: 0/0 &middot; candidates: 0 &middot; creator-jaise: 0 &middot; band me: 0
-        &middot; India: 0
-      </p>
-      <p id="dcDeadlineLine" class="detail hidden"></p>
-    </div>
-
-    <ul id="dcTop" class="completed hidden"></ul>
-    <ul id="dcLog"></ul>
-
-    <div class="actions">
-      <button id="dcDownloadBtn" disabled>Download JSON</button>
-      <select id="dcCopyList" title="Kaunsi list copy karni hai">
-        <option value="band">Band ke andar (naape hue)</option>
-        <option value="india_band">India + band ke andar</option>
-        <option value="kept">Sab creator-jaise</option>
-      </select>
-      <button id="dcCopyBtn" disabled>Handles copy</button>
-      <button id="dcResetBtn" class="danger">Reset</button>
-    </div>
-    <p class="hint">
-      Run poora hote hi <code>ig-discovery_&lt;date&gt;.json</code> apne aap download ho jata
-      hai. Uske andar teen list hoti hain — <code>kept_handles</code> (dekhne layak),
-      <code>in_band_handles</code> (jinke followers <i>naap ke</i> band ke andar nikle) aur
-      <code>india_in_band_handles</code> (unme se jinke India hone ka evidence mila). Jo
-      list <b>Handles copy</b> se chahiye wo bagal wale dropdown se chuno, phir
-      <b>Instagram profiles</b> tab me paste karke poora profile+posts export chala lo.
-    </p>
-    <p class="hint">
-      Yeh mode Instagram ke apne suggestion endpoints use karta hai, jo undocumented hain
-      aur badalte rehte hain. Koi source jawab dena band kare to woh apne aap band ho jata
-      hai aur baaki source chalte rehte hain — log me dikh jayega.
-    </p>
-  </section>
-
-  <!-- ============================== Campaign brief =============================== -->
-  <section id="briefSection">
-    <label for="brBriefText">Campaign brief (paste karo ya file choose karo)</label>
-    <textarea
-      id="brBriefText"
-      rows="6"
-      placeholder="Brand Name:&#10;Huminity&#10;&#10;Niche / Genre:&#10;Lifestyle, Fashion, Beauty&#10;&#10;Tier:&#10;100K to 500K followers&#10;&#10;Location:&#10;Delhi NCR, Mumbai, Bengaluru"
-    ></textarea>
-    <div class="row">
-      <label for="brFile">Ya file se</label>
-      <input id="brFile" type="file" accept=".txt,.md,.markdown,.text,.csv,.json" />
-    </div>
-    <p class="hint">
-      .txt / .md / .csv / .json padhi ja sakti hai. PDF ya Word ka text copy karke upar
-      paste kar do — parser wahi kaam karega.
-    </p>
-
-    <div class="actions">
-      <button id="brParseBtn">Brief padho</button>
-    </div>
-
-    <div id="brPlan" class="plan hidden"></div>
-    <ul id="brWarnings" class="warnlist hidden"></ul>
-
-    <label for="brSeeds">Search seeds (edit kar sakte ho)</label>
-    <textarea id="brSeeds" rows="5" placeholder="Brief padho — seeds yahan apne aap aa jayenge"></textarea>
-    <p class="hint">
-      Yahi lines IG discovery me jayengi: <b>koi bhi text</b> = Instagram search,
-      <b>#tag</b> = hashtag, <b>@handle</b> = us jaise accounts.
-    </p>
-
-    <div class="row">
-      <label for="brCreators">Kitne creator chahiye</label>
-      <input id="brCreators" type="number" min="1" max="50" value="2" />
-    </div>
-    <div class="row">
-      <label for="brPosts">Posts per creator</label>
-      <input id="brPosts" type="text" inputmode="numeric" value="10" placeholder="10" />
-    </div>
-    <div class="row">
-      <label for="brMinFollowers">Min followers</label>
-      <input id="brMinFollowers" type="number" min="0" step="1000" value="100000" />
-    </div>
-    <div class="row">
-      <label for="brMaxFollowers">Max followers</label>
-      <input id="brMaxFollowers" type="number" min="1000" step="10000" value="500000" />
-    </div>
-    <div class="row">
-      <label for="brDepth">Depth (0 = sirf seeds)</label>
-      <input id="brDepth" type="number" min="0" max="3" value="2" />
-    </div>
-    <div class="row">
-      <label for="brMaxCandidates">Max candidates</label>
-      <input id="brMaxCandidates" type="number" min="50" max="5000" step="50" value="500" />
-    </div>
-    <div class="row">
-      <label for="brDelay">Delay between requests (s)</label>
-      <input id="brDelay" type="number" min="2" value="4" />
-    </div>
-    <div class="row">
-      <label for="brFolder">Download folder</label>
-      <input id="brFolder" type="text" placeholder="brief_brand_2026-08-31" />
-    </div>
-
-    <div class="actions">
-      <button id="brStartBtn">Start</button>
-      <button id="brStopBtn" class="hidden">Stop run</button>
-    </div>
-
-    <div id="brPauseBanner" class="banner hidden">
-      <p>Run pause ho gaya hai — neeche wajah dekho, phir Resume dabao.</p>
-      <p id="brPauseDetail" class="detail"></p>
-      <button id="brResumeBtn">Resume</button>
-    </div>
-
-    <div class="status">
-      <p id="brStatusLine">Idle</p>
-      <p id="brSubStatus"></p>
-    </div>
-
-    <ul id="brPicked" class="completed hidden"></ul>
-    <ul id="brLog"></ul>
-
-    <div class="actions">
-      <button id="brResetBtn" class="danger">Reset</button>
-    </div>
-    <p class="hint">
-      Ek hi folder me sab kuch aata hai: <code>_brief-plan.json</code> (kya samjha gaya),
-      <code>_shortlist.json</code> (poori ranked list), har chune hue creator ka
-      <code>&lt;handle&gt;.json</code> (profile + posts), aur <code>_summary.json</code>.
-    </p>
-    <p class="hint">
-      Gender split apne aap nahi hota — profile se gender bharosemand tarike se pata nahi
-      chalta. <code>_shortlist.json</code> ki ranked list se khud pick karo.
-    </p>
-  </section>
-
-  <!-- ========================= Brand contact finder ========================= -->
-  <section id="brandsSection">
-    <label for="bcBrands">Brand names (ek per line)</label>
-    <textarea
-      id="bcBrands"
-      rows="5"
-      placeholder="Nykaa&#10;boAt Lifestyle&#10;Mamaearth"
-    ></textarea>
-    <p class="hint">
-      Har brand ke liye: Google &rarr; official website &rarr; uske contact/about page,
-      saath me LinkedIn aur Apollo ke public search results. Sirf wahi data jo public
-      page pe pehle se likha hai.
-    </p>
-
-    <div class="row">
-      <label for="bcRegion">Region hint</label>
-      <input id="bcRegion" type="text" placeholder="India" />
-    </div>
-    <p class="hint">Optional — Google query me jud jata hai, same naam ke doosre desh wale brand hat jate hain.</p>
-
-    <div class="row">
-      <label for="bcSitePages">Website pages / brand</label>
-      <input id="bcSitePages" type="number" min="1" max="8" value="3" />
-    </div>
-    <div class="row">
-      <label for="bcGoogleDelay">Delay between Google searches (s)</label>
-      <input id="bcGoogleDelay" type="number" min="8" value="15" />
-    </div>
-    <div class="row">
-      <label for="bcPageDelay">Delay between website pages (s)</label>
-      <input id="bcPageDelay" type="number" min="2" value="6" />
-    </div>
-    <p id="bcDelayWarning" class="warning hidden">Kam delay = jaldi CAPTCHA. Google ke liye 15s+ rakho.</p>
-
-    <div class="row check">
-      <input id="bcLinkedin" type="checkbox" checked />
-      <label for="bcLinkedin">LinkedIn search se owner / founder ka naam</label>
-    </div>
-    <div class="row check">
-      <input id="bcLeadDb" type="checkbox" checked />
-      <label for="bcLeadDb">Lead databases — Apollo, RocketReach, Lusha, ContactOut, EasyLeadz, CoreSignal</label>
-    </div>
-    <div class="row check">
-      <input id="bcRegistry" type="checkbox" checked />
-      <label for="bcRegistry">Company registry — Zauba, Tofler, IndiaFilings (board of directors)</label>
-    </div>
-    <div class="row check">
-      <input id="bcOwnerOnly" type="checkbox" />
-      <label for="bcOwnerOnly">Sirf owner/director ke contact rakho (info@, reception hata do)</label>
-    </div>
-    <div class="row check">
-      <input id="bcOpenProfiles" type="checkbox" />
-      <label for="bcOpenProfiles">In sites ke page khud bhi kholo</label>
-    </div>
-    <p class="hint">
-      Saare lead databases ek hi Google query me jate hain, alag-alag nahi — warna har brand
-      pe 6 search lagti aur CAPTCHA turant aa jata.
-    </p>
-    <p class="hint">
-      <b>Seedha number kahan se aata hai:</b> in databases ka direct-dial login + paid credit
-      ke peeche hai, woh yahan nahi milega. Inse <i>naam aur designation</i> milta hai. Asli
-      number website ke team/contact page se, registry ke directors table se, ya person ke
-      apne card me likhe <code>tel:</code> se aata hai — aur file me har number ke saath
-      likha hota hai woh kiska hai.
-    </p>
-
-    <div id="bcAccessBanner" class="banner hidden">
-      <p>
-        Brand ki apni website padhne ke liye site access chahiye. Iske bina sirf Google
-        ke snippets milenge — email/phone zyada tar website pe hi hote hain.
-      </p>
-      <button id="bcGrantBtn">Site access do</button>
-    </div>
-
-    <div class="actions">
-      <button id="bcStartBtn">Start</button>
-      <button id="bcStopBtn" class="hidden">Stop run</button>
-    </div>
-
-    <div id="bcPauseBanner" class="banner hidden">
-      <p>Run pause ho gaya hai — neeche wajah dekho, phir Resume dabao.</p>
-      <p id="bcPauseDetail" class="detail"></p>
-      <button id="bcResumeBtn">Resume</button>
-    </div>
-
-    <div class="status">
-      <p id="bcStatusLine">Idle</p>
-      <p id="bcTotalsLine">Brands: 0/0 &middot; owner contact: 0</p>
-    </div>
-
-    <ul id="bcRows" class="completed hidden"></ul>
-    <ul id="bcLog"></ul>
-
-    <div class="actions">
-      <button id="bcJsonBtn" disabled>Download JSON</button>
-      <button id="bcCsvBtn" disabled>Download CSV</button>
-      <button id="bcResetBtn" class="danger">Reset</button>
-    </div>
-    <p class="hint">
-      Run poora hote hi <code>brands_contacts_&lt;date&gt;.json</code> apne aap download ho
-      jati hai. CSV ke pehle columns hi <code>owner_name, owner_title, owner_phone,
-      owner_email</code> hain — aur har claim ka source URL saath me hota hai.
-    </p>
-  </section>
-
+  <!-- Scripts -->
   <script src="brief-parse.js"></script>
-  <script src="popup.js"></script>
   <script src="popup-profiles.js"></script>
-  <script src="popup-youtube.js"></script>
-  <script src="popup-linkedin.js"></script>
   <script src="popup-discover.js"></script>
   <script src="popup-brief.js"></script>
-  <script src="popup-brands.js"></script>
+  <script src="popup-youtube.js"></script>
 </body>
 </html>

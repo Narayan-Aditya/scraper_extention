@@ -64,26 +64,96 @@
     return window.__IG_RUN_TOKEN__ === runToken && !window.__IG_STOP__;
   }
 
-  // Per-account post budget, seeded by the worker. null means MAX — take everything.
-  // postsDelivered starts at whatever earlier injections already banked, so a resume
-  // spends only what is left of the budget instead of starting the count over.
+  // Per-account post budget and start-date cutoff, seeded by the worker.
   const postLimit = Number.isFinite(job.postLimit) && job.postLimit > 0 ? Math.floor(job.postLimit) : null;
+  const startCutoffMs = parseCutoffMs(job.startDate);
   let postsDelivered = Math.max(0, Number(job.postsSoFar) || 0);
+
+  function parseCutoffMs(dateStr) {
+    if (!dateStr || typeof dateStr !== "string") return null;
+    const str = dateStr.trim();
+    if (!str) return null;
+    const iso = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (iso) {
+      const d = new Date(parseInt(iso[1], 10), parseInt(iso[2], 10) - 1, parseInt(iso[3], 10), 0, 0, 0, 0);
+      return isNaN(d.getTime()) ? null : d.getTime();
+    }
+    const d = new Date(str);
+    return isNaN(d.getTime()) ? null : d.getTime();
+  }
+
+  const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  // Decodes Instagram shortcode to creation timestamp (ms) using Instagram's Snowflake 64-bit ID.
+  function shortcodeToTimestamp(shortcode) {
+    if (!shortcode || typeof shortcode !== "string") return null;
+    try {
+      let id = 0n;
+      for (let i = 0; i < shortcode.length; i++) {
+        const idx = BASE64_ALPHABET.indexOf(shortcode[i]);
+        if (idx === -1) return null;
+        id = id * 64n + BigInt(idx);
+      }
+      const timestamp = Number(id >> 23n) + 1314220021721;
+      return isNaN(timestamp) ? null : timestamp;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function getPostTimestamp(post) {
+    if (!post) return null;
+    if (post.taken_at) {
+      const t = new Date(post.taken_at).getTime();
+      if (!isNaN(t)) return t;
+    }
+    if (post.shortcode) {
+      return shortcodeToTimestamp(post.shortcode);
+    }
+    return null;
+  }
+
+  function filterPostsByDate(rawPosts) {
+    if (!startCutoffMs) {
+      return { keptPosts: rawPosts, cutoffReached: false };
+    }
+    const kept = [];
+    let cutoff = false;
+    for (const post of rawPosts) {
+      const ts = getPostTimestamp(post);
+      if (ts != null) {
+        if (ts >= startCutoffMs) {
+          kept.push(post);
+        } else {
+          // Instagram posts arrive newest to oldest, so meeting an older post means cutoff reached!
+          cutoff = true;
+          break;
+        }
+      } else {
+        kept.push(post);
+      }
+    }
+    return { keptPosts: kept, cutoffReached: cutoff };
+  }
 
   function budgetLeft() {
     return postLimit == null ? Infinity : Math.max(0, postLimit - postsDelivered);
   }
 
-  // Sends one page, trimmed to whatever is left of the budget. Returns "ok", "stopped",
-  // or "limit" — "limit" means the account is finished because the user's count is full,
-  // which is a *complete* result, not a truncated one.
+  // Sends one page, trimmed to whatever is left of the budget / date cutoff.
+  // Returns "ok", "stopped", "limit", or "cutoff"
   async function reportPosts(payload) {
     const room = budgetLeft();
     if (room <= 0) return "limit";
-    const posts = payload.posts.length > room ? payload.posts.slice(0, room) : payload.posts;
-    const ack = await report("IG_PAGE", Object.assign({}, payload, { posts }));
-    if (!ack || ack.ok === false) return "stopped";
-    postsDelivered += posts.length;
+
+    const { keptPosts, cutoffReached } = filterPostsByDate(payload.posts || []);
+    if (keptPosts.length > 0) {
+      const posts = keptPosts.length > room ? keptPosts.slice(0, room) : keptPosts;
+      const ack = await report("IG_PAGE", Object.assign({}, payload, { posts }));
+      if (!ack || ack.ok === false) return "stopped";
+      postsDelivered += posts.length;
+    }
+
+    if (cutoffReached) return "cutoff";
     return budgetLeft() <= 0 ? "limit" : "ok";
   }
 
@@ -498,9 +568,118 @@
     return (el && el.getAttribute("content")) || "";
   }
 
-  // Last-resort profile, read off the page Instagram already rendered for us. Thin by
-  // design: counts and name come from the og: tags, everything the tags don't carry stays
-  // null rather than being guessed.
+  // Extracts balanced JSON object from string starting at index
+  function extractBalancedJson(text, start) {
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    for (let i = start; i < text.length; i++) {
+      const c = text[i];
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (c === "\\") {
+        escape = true;
+        continue;
+      }
+      if (c === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (!inString) {
+        if (c === "{") depth++;
+        else if (c === "}") {
+          depth--;
+          if (depth === 0) {
+            const sub = text.slice(start, i + 1);
+            try {
+              return JSON.parse(sub);
+            } catch (e) {
+              return null;
+            }
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  function findUserObjectInTree(node, targetHandle, depth = 0) {
+    if (!node || depth > 10 || typeof node !== "object") return null;
+    if (
+      node.username &&
+      String(node.username).toLowerCase() === targetHandle &&
+      (node.edge_followed_by != null || node.follower_count != null || node.id != null || node.pk != null)
+    ) {
+      return node;
+    }
+    for (const key of Object.keys(node)) {
+      const val = node[key];
+      if (val && typeof val === "object") {
+        const hit = findUserObjectInTree(val, targetHandle, depth + 1);
+        if (hit) return hit;
+      }
+    }
+    return null;
+  }
+
+  function findUserInScriptText(text, handle) {
+    const target = handle.toLowerCase();
+    const pattern = new RegExp('"username"\\s*:\\s*"' + target + '"', "i");
+    let match = pattern.exec(text);
+    if (!match) return null;
+
+    let bracesSeen = 0;
+    for (let i = match.index; i >= 0 && bracesSeen < 30; i--) {
+      if (text[i] === "{") {
+        bracesSeen++;
+        const candidate = extractBalancedJson(text, i);
+        if (candidate) {
+          const found = findUserObjectInTree(candidate, target);
+          if (found) return found;
+        }
+      }
+    }
+    return null;
+  }
+
+  // Reads profile directly from the page's embedded JSON scripts without making any network requests.
+  function tryPageEmbeddedProfile() {
+    let scripts;
+    try {
+      scripts = Array.from(document.querySelectorAll("script"));
+    } catch (e) {
+      return { ok: false, reason: "endpoint_shape" };
+    }
+
+    const handle = job.handle.toLowerCase();
+    for (const script of scripts) {
+      const text = script.textContent || "";
+      if (!text || text.toLowerCase().indexOf(handle) === -1) continue;
+
+      const userObj = findUserInScriptText(text, handle);
+      if (userObj) {
+        let profile;
+        if (userObj.edge_followed_by != null || userObj.edge_owner_to_timeline_media != null) {
+          profile = mapProfile(userObj);
+        } else {
+          profile = mapUserInfo(userObj, userObj.pk || userObj.id || null);
+        }
+        const seed = extractSeedPosts(userObj);
+        const readable = !profile.is_private || userObj.followed_by_viewer === true;
+        return {
+          ok: true,
+          profile: { ...profile, profile_source: "page_embedded_json" },
+          readable,
+          seed,
+        };
+      }
+    }
+    return { ok: false, reason: "endpoint_shape" };
+  }
+
+  // Last-resort profile, read off the page Instagram already rendered for us.
   function profileFromDom(userId) {
     const description =
       metaContent('meta[property="og:description"]') || metaContent('meta[name="description"]');
@@ -522,19 +701,67 @@
       bodyText = "";
     }
 
+    let followers = grab("followers");
+    let following = grab("following");
+    let postsCount = grab("posts");
+
+    // Fallback: parse counts from header if meta tags were not populated
+    if (followers == null || following == null || postsCount == null) {
+      try {
+        const lis = Array.from(document.querySelectorAll("header ul li, header section ul li"));
+        for (const li of lis) {
+          const t = li.innerText || li.textContent || "";
+          if (followers == null && /followers/i.test(t)) {
+            const m = t.match(/([\d.,]+\s*[kmb]?)/i);
+            if (m) followers = parseCountText(m[1]);
+          } else if (following == null && /following/i.test(t)) {
+            const m = t.match(/([\d.,]+\s*[kmb]?)/i);
+            if (m) following = parseCountText(m[1]);
+          } else if (postsCount == null && /posts/i.test(t)) {
+            const m = t.match(/([\d.,]+\s*[kmb]?)/i);
+            if (m) postsCount = parseCountText(m[1]);
+          }
+        }
+      } catch (e) {}
+    }
+
+    let externalUrl = null;
+    try {
+      const links = Array.from(document.querySelectorAll("header a[href]"));
+      for (const a of links) {
+        const href = a.getAttribute("href") || "";
+        if (
+          href.startsWith("http") &&
+          !href.includes("instagram.com") &&
+          !href.includes("facebook.com/help") &&
+          !href.includes("threads.net")
+        ) {
+          externalUrl = href;
+          break;
+        }
+      }
+    } catch (e) {}
+
+    let isVerified = false;
+    try {
+      isVerified = !!document.querySelector(
+        'header svg[aria-label*="Verified"], header svg[aria-label*="verified"], [aria-label="Verified"]'
+      );
+    } catch (e) {}
+
     return {
       user_id: userId != null ? String(userId) : null,
       username: job.handle,
       full_name: nameMatch ? nameMatch[1].trim() : "",
       biography: bioMatch ? bioMatch[1].trim() : "",
-      external_url: null,
+      external_url: externalUrl,
       is_private: /this account is private/i.test(bodyText),
-      is_verified: null, // the page shows a badge, but not one we can read reliably
+      is_verified: isVerified,
       is_business: null,
       category: null,
-      followers: grab("followers"),
-      following: grab("following"),
-      posts_count: grab("posts"),
+      followers,
+      following,
+      posts_count: postsCount,
       profile_pic_url: pic,
       profile_pic_url_hd: pic,
       profile_source: "dom",
@@ -544,7 +771,7 @@
   // web_profile_info already carries the first ~12 posts. Using them saves a request and
   // tells us straight away whether there is anything left to paginate.
   function extractSeedPosts(user) {
-    const media = user && user.edge_owner_to_timeline_media;
+    const media = user && (user.edge_owner_to_timeline_media || user.timeline_media);
     if (!media || !Array.isArray(media.edges)) return null;
     const posts = media.edges.map((edge) => mapGraphNode(edge && edge.node)).filter(Boolean);
     const info = media.page_info || {};
@@ -555,10 +782,9 @@
   //
   // web_profile_info is the richest source (it alone carries the first page of posts) but
   // it is also the one that breaks: Instagram 400s it for many business accounts because
-  // one of its own response fields was retired. So the profile is resolved the same way
-  // the posts are — a chain, each link trading detail for a source that still answers,
-  // ending at the rendered page itself. Only a wall (login, checkpoint, rate limit) stops
-  // the chain early, because no source gets past those.
+  // one of its own response fields was retired, or 429s programmatic fetch calls. So the
+  // profile is resolved in a chain starting from page-embedded JSON, through web_profile_info,
+  // user info, and ending at the rendered page DOM itself.
 
   // Finds the account's numeric id in the JSON Instagram embeds in the page it just
   // served us. Anchors on the username and takes the nearest id, because the field order
@@ -718,17 +944,28 @@
       return attempt;
     }
 
-    const strategies = APP_ID_CANDIDATES.map((appId) => ({
-      name: "web_profile_info (app id " + appId + ")",
-      run: () => tryWebProfileInfo(appId),
-    }));
+    const strategies = [
+      { name: "page embedded JSON", run: async () => tryPageEmbeddedProfile() },
+    ];
+    for (const appId of APP_ID_CANDIDATES) {
+      strategies.push({
+        name: "web_profile_info (app id " + appId + ")",
+        run: () => tryWebProfileInfo(appId),
+      });
+    }
     strategies.push({ name: "users/<id>/info", run: userInfoStrategy });
     strategies.push({ name: "page DOM", run: async () => tryDomProfile(knownUserId, rejectedIds) });
 
     for (let index = 0; index < strategies.length; index++) {
       if (!isCurrent()) return null;
       const strategy = strategies[index];
-      const attempt = await strategy.run();
+      let attempt;
+      try {
+        attempt = await strategy.run();
+      } catch (err) {
+        attempt = { ok: false, reason: "endpoint_shape", status: null, detail: String(err) };
+      }
+      if (!attempt) continue;
 
       if (attempt.ok) {
         if (tried.length) {
@@ -752,10 +989,17 @@
       }
 
       tried.push(strategy.name + " → " + attempt.reason + (attempt.status ? " " + attempt.status : ""));
-      if (WALL_REASONS.has(attempt.reason)) {
+
+      // Only abort immediately if the entire tab was redirected away or hit a hard login wall on the page
+      if (attempt.reason === "wrong_origin") {
         await fail(attempt.reason, attempt.detail, attempt.status);
         return null;
       }
+      if ((attempt.reason === "login_wall" || attempt.reason === "challenge") && looksLikeLoginWall()) {
+        await fail(attempt.reason, attempt.detail, attempt.status);
+        return null;
+      }
+
       if (index < strategies.length - 1 && !(await pacedSleep(jitter(job.pageDelayMs)))) return null;
     }
 
@@ -786,10 +1030,8 @@
       const res = await getJson(path);
       if (!res.ok) {
         if (res.reason === "stopped") return "stopped";
-        // The feed endpoint being gone entirely is the signal to try GraphQL — but only
-        // before we have banked anything from it. A mid-crawl shape change is a real
-        // failure the user should see rather than a silent source switch.
-        if ((res.reason === "not_found" || res.reason === "endpoint_shape") && banked === 0) {
+        // If feed API is rate-limited, forbidden, not found, or retired, fallback to GraphQL or DOM if nothing banked yet
+        if ((res.reason === "not_found" || res.reason === "endpoint_shape" || res.reason === "rate_limit" || res.reason === "forbidden") && banked === 0) {
           return "fallback";
         }
         await fail(res.reason, res.detail, res.status);
@@ -835,7 +1077,7 @@
             source: "feed_api",
           });
           if (sent === "stopped") return "stopped";
-          if (sent === "limit") {
+          if (sent === "limit" || sent === "cutoff") {
             await report("IG_DONE", { capped: false, limited: true });
             return "done";
           }
@@ -888,7 +1130,7 @@
           if (!(await pacedSleep(jitter(job.pageDelayMs)))) return "stopped";
           continue;
         }
-        if (res.reason === "not_found" || res.reason === "endpoint_shape") return "fallback";
+        if (res.reason === "not_found" || res.reason === "endpoint_shape" || res.reason === "rate_limit" || res.reason === "forbidden") return "fallback";
         await fail(res.reason, res.detail, res.status);
         return "failed";
       }
@@ -928,7 +1170,7 @@
           source: "graphql",
         });
         if (sent === "stopped") return "stopped";
-        if (sent === "limit") {
+        if (sent === "limit" || sent === "cutoff") {
           await report("IG_DONE", { capped: false, limited: true });
           return "done";
         }
@@ -950,6 +1192,44 @@
     return "stopped";
   }
 
+  // Realistic human-like scrolling: micro-steps with variable speed, random pauses,
+  // and subtle upward glances to avoid detection and maintain natural smooth rendering.
+  async function smoothHumanScroll(baseDelayMs) {
+    if (!isCurrent()) return false;
+    const currentY = window.scrollY || window.pageYOffset || 0;
+    const scrollHeight = document.body.scrollHeight || document.documentElement.scrollHeight || 0;
+    const viewportHeight = window.innerHeight || 800;
+
+    // Human scroll distance (roughly 65% to 95% of screen height)
+    const distance = Math.min(
+      Math.floor(viewportHeight * (0.65 + Math.random() * 0.3)),
+      Math.max(300, scrollHeight - currentY)
+    );
+
+    // 4 to 6 micro-steps
+    const steps = Math.floor(4 + Math.random() * 3);
+    const stepDist = distance / steps;
+
+    for (let s = 0; s < steps; s++) {
+      if (!isCurrent()) return false;
+      const jitterStep = stepDist + (Math.random() * 16 - 8);
+      window.scrollBy({ top: jitterStep, behavior: "smooth" });
+      await sleep(35 + Math.floor(Math.random() * 45)); // 35-80ms per tick
+    }
+
+    // 12% probability: tiny reverse scroll up (80-150px) simulating human glance
+    if (Math.random() < 0.12 && window.scrollY > 400) {
+      await sleep(200 + Math.floor(Math.random() * 200));
+      window.scrollBy({ top: -(80 + Math.floor(Math.random() * 70)), behavior: "smooth" });
+      await sleep(250 + Math.floor(Math.random() * 250));
+      window.scrollBy({ top: 90 + Math.floor(Math.random() * 60), behavior: "smooth" });
+    }
+
+    // Natural random pause between scrolls
+    const waitMs = Math.max(1800, jitter(baseDelayMs || 3000));
+    return await pacedSleep(waitMs);
+  }
+
   // Last resort: scroll the rendered grid and harvest shortcodes. Yields a reduced post
   // schema (no counts, no captions) but keeps the feature useful when both JSON paths
   // are gone. Tagged source:"dom" so the file never pretends to be complete data.
@@ -958,8 +1238,9 @@
     const posts = [];
     let stagnantRounds = 0;
     let pageIndex = 0;
+    let cutoffReached = false;
 
-    while (isCurrent() && stagnantRounds < 3 && pageIndex < HARD_PAGE_CAP) {
+    while (isCurrent() && stagnantRounds < 4 && pageIndex < HARD_PAGE_CAP && !cutoffReached) {
       const before = posts.length;
       const anchors = Array.from(document.querySelectorAll("a[href]"));
       for (const anchor of anchors) {
@@ -968,18 +1249,39 @@
         const shortcode = match[1];
         if (seen.has(shortcode)) continue;
         seen.add(shortcode);
+
+        const postTs = shortcodeToTimestamp(shortcode);
+        const takenAtIso = postTs ? isoFromUnix(Math.floor(postTs / 1000)) : null;
+
+        // Check date cutoff on DOM item
+        if (postTs != null && startCutoffMs != null && postTs < startCutoffMs) {
+          cutoffReached = true;
+          break; // Stop adding posts older than cutoff date
+        }
+
+        const img = anchor.querySelector("img");
+        const displayUrl = (img && (img.currentSrc || img.src)) || null;
+        const caption = (img && img.getAttribute("alt")) || "";
+        const isVideo = !!anchor.querySelector(
+          'svg[aria-label*="Video"], svg[aria-label*="video"], svg[aria-label*="Reel"], svg[aria-label*="reel"], svg[aria-label*="Clip"], [aria-label*="Clip"], [aria-label*="Reel"], [aria-label*="Video"]'
+        );
+        const isCarousel = !!anchor.querySelector(
+          'svg[aria-label*="Carousel"], svg[aria-label*="carousel"], [aria-label*="Carousel"], [aria-label*="carousel"]'
+        );
+        const mediaType = isVideo ? "video" : isCarousel ? "carousel" : "image";
+
         posts.push({
           id: shortcode,
           shortcode,
           url: "https://www.instagram.com/p/" + shortcode + "/",
-          taken_at: null,
-          media_type: "unknown",
-          is_video: null,
-          caption: "",
+          taken_at: takenAtIso,
+          media_type: mediaType,
+          is_video: isVideo,
+          caption,
           like_count: null,
           comment_count: null,
           view_count: null,
-          display_url: null,
+          display_url: displayUrl,
           video_url: null,
           carousel_media: null,
           location: null,
@@ -992,27 +1294,40 @@
           userId,
           posts: posts.slice(before),
           nextCursor: null,
-          moreAvailable: true,
+          moreAvailable: !cutoffReached,
           pageIndex,
           source: "dom",
         });
         if (sent === "stopped") return "stopped";
-        if (sent === "limit") {
+        if (sent === "limit" || sent === "cutoff") {
           await report("IG_DONE", { capped: false, limited: true });
           return "done";
         }
         stagnantRounds = 0;
       } else {
         stagnantRounds += 1;
+        // If DOM stalled, slightly scroll up and down to re-arm lazy load observer
+        if (stagnantRounds === 1 || stagnantRounds === 2) {
+          window.scrollBy({ top: -200, behavior: "smooth" });
+          await sleep(350);
+          window.scrollBy({ top: 250, behavior: "smooth" });
+        }
+      }
+
+      if (cutoffReached) {
+        await report("IG_DONE", { capped: false, limited: true });
+        return "done";
       }
 
       pageIndex += 1;
-      window.scrollTo(0, document.body.scrollHeight);
-      if (!(await pacedSleep(Math.max(1200, jitter(job.pageDelayMs))))) return "stopped";
+
+      // Safe human-like smooth scrolling
+      const scrolledOk = await smoothHumanScroll(job.pageDelayMs);
+      if (!scrolledOk) return "stopped";
     }
 
     if (!isCurrent()) return "stopped";
-    await report("IG_DONE", { capped: pageIndex >= HARD_PAGE_CAP });
+    await report("IG_DONE", { capped: pageIndex >= HARD_PAGE_CAP, limited: cutoffReached });
     return "done";
   }
 
@@ -1064,7 +1379,7 @@
         pageIndex = 1;
         // Either the budget is full, or the whole profile fits on that one page —
         // nothing left to paginate in both cases.
-        if (sent === "limit") {
+        if (sent === "limit" || sent === "cutoff") {
           await report("IG_DONE", { capped: false, limited: true });
           return;
         }

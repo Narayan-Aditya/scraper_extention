@@ -62,9 +62,8 @@
   const NETWORK_ATTEMPTS = 3;
   const STOP_CHECK_MS = 500;
   // How many structural failures a source is allowed before it is declared dead for the
-  // run. One is not enough: a single mistyped hashtag 404s without saying anything about
-  // the endpoint. Two in a row is the endpoint.
-  const SOURCE_FAILURE_LIMIT = 2;
+  // run. A few non-existent or deleted usernames should not kill the entire chain graph.
+  const SOURCE_FAILURE_LIMIT = 10;
   // Runaway guards for the deep walk below. A malformed or enormous response must not be
   // able to hang the tab, and no single task may flood the frontier.
   const WALK_NODE_CAP = 40000;
@@ -335,6 +334,18 @@
         node.public_phone_country_code == null
           ? null
           : String(node.public_phone_country_code),
+      email:
+        typeof node.public_email === "string" && node.public_email
+          ? node.public_email.trim().toLowerCase()
+          : typeof node.business_email === "string" && node.business_email
+          ? node.business_email.trim().toLowerCase()
+          : null,
+      phone:
+        node.public_phone_number != null
+          ? String(node.public_phone_number).trim()
+          : node.contact_phone_number != null
+          ? String(node.contact_phone_number).trim()
+          : null,
     };
   }
 
@@ -368,7 +379,7 @@
 
       if (typeof value.username === "string") {
         const candidate = mapCandidate(value);
-        if (candidate && !seen.has(candidate.handle)) {
+        if (candidate && candidate.is_private !== true && !seen.has(candidate.handle)) {
           seen.add(candidate.handle);
           out.push(candidate);
           if (out.length >= CANDIDATES_PER_TASK_CAP) break;

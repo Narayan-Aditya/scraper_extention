@@ -21,7 +21,6 @@
   const runHoursRow = document.getElementById("dcRunHoursRow");
   const unattendedHintEl = document.getElementById("dcUnattendedHint");
   const deadlineLineEl = document.getElementById("dcDeadlineLine");
-  const copyListEl = document.getElementById("dcCopyList");
   const delayWarningEl = document.getElementById("dcDelayWarning");
   const startBtn = document.getElementById("dcStartBtn");
   const stopBtn = document.getElementById("dcStopBtn");
@@ -33,7 +32,6 @@
   const topEl = document.getElementById("dcTop");
   const logEl = document.getElementById("dcLog");
   const downloadBtn = document.getElementById("dcDownloadBtn");
-  const copyBtn = document.getElementById("dcCopyBtn");
   const resetBtn = document.getElementById("dcResetBtn");
   const discoverDot = document.getElementById("discoverModeDot");
 
@@ -73,19 +71,18 @@
 
   // Mirrors inBandDiscoverRows()/indiaInBandDiscoverRows() in background-discover.js.
   // Duplicated rather than shared for the same reason normalizeHandle() is duplicated in
-  // popup-profiles.js — the panel is a separate page from the worker and there is no
-  // bundler here. The worker stays the authority: all three lists are written into the
-  // downloaded file, and the clipboard is only ever a convenience copy of one of them.
-  function deliveryRows(state, which) {
-    const min = state.minFollowers == null ? 0 : state.minFollowers;
+  function deliveryRows(state) {
+    const min = state.minFollowers == null ? 1000 : state.minFollowers;
     const max = state.maxFollowers || Infinity;
-    const rows = Object.values(state.candidates || {}).filter((row) => row && row.keep);
-    if (which === "kept") return rows;
+    const rows = Object.values(state.candidates || {}).filter(
+      (row) => row && row.keep && !row.is_private
+    );
     const inBand = rows.filter(
       (row) =>
-        typeof row.followers === "number" && row.followers >= min && row.followers <= max
+        row.followers == null ||
+        (typeof row.followers === "number" && row.followers >= min && row.followers <= max)
     );
-    return which === "india_band" ? inBand.filter((row) => row.india === "yes") : inBand;
+    return state.indiaOnly ? inBand.filter((row) => row.india === "yes") : inBand;
   }
 
   function formatFollowers(value) {
@@ -210,12 +207,10 @@
       (totals.tasksDone || 0) +
       "/" +
       (totals.tasksPlanned || 0) +
-      " · candidates: " +
+      " · Discovered: " +
       (totals.candidates || 0) +
-      " · creator-jaise: " +
+      " · Verified Creators: " +
       (totals.kept || 0) +
-      " · band me: " +
-      (totals.inBand || 0) +
       " · India: " +
       (totals.indiaInBand || 0);
 
@@ -234,9 +229,6 @@
 
     const hasResults = (totals.candidates || 0) > 0;
     downloadBtn.disabled = !hasResults;
-    // Tied to the list actually selected, so the button is never live for a list that would
-    // copy nothing — an empty India list is a real answer and should look like one.
-    copyBtn.disabled = !deliveryRows(state, copyListEl.value).length;
 
     // Same guard the other modes use: never overwrite what the user is mid-way typing.
     if (!seedsEdited && state.seeds && state.seeds.length) {
@@ -312,13 +304,6 @@
 
   indiaOnlyEl.addEventListener("change", () => {
     settingsEdited = true;
-    // The dropdown follows the switch: asking for Indian creators and then copying the
-    // all-countries list is never what somebody meant.
-    copyListEl.value = indiaOnlyEl.checked ? "india_band" : "band";
-    if (lastState) render(lastState);
-  });
-
-  copyListEl.addEventListener("change", () => {
     if (lastState) render(lastState);
   });
 
@@ -383,26 +368,6 @@
     render(await send({ type: "DISCOVER_DOWNLOAD" }));
   });
 
-  copyBtn.addEventListener("click", async () => {
-    const state = lastState || (await send({ type: "DISCOVER_GET_STATE" }));
-    const handles = deliveryRows(state, copyListEl.value)
-      .sort((a, b) => (b.score == null ? -1 : b.score) - (a.score == null ? -1 : a.score))
-      .map((row) => "@" + row.handle);
-
-    if (!handles.length) return;
-    try {
-      await navigator.clipboard.writeText(handles.join("\n"));
-      copyBtn.textContent = handles.length + " copy ho gaye";
-    } catch (e) {
-      // Clipboard can be refused when the panel does not have focus; say so instead of
-      // failing silently.
-      copyBtn.textContent = "Copy nahi hua";
-    }
-    setTimeout(() => {
-      copyBtn.textContent = "Handles copy";
-    }, 2000);
-  });
-
   resetBtn.addEventListener("click", async () => {
     const proceed = confirm(
       "Discovery run ka saara collected data clear ho jayega (download ki hui file safe hai). Reset karein?"
@@ -423,7 +388,6 @@
     indiaOnlyEl.checked = false;
     unattendedEl.checked = false;
     runHoursEl.value = 8;
-    copyListEl.value = "band";
     syncUnattendedRows();
     delayWarningEl.classList.add("hidden");
     render(state);

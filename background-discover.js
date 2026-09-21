@@ -309,7 +309,11 @@ function scoreDiscoverCandidate(candidate, opts) {
   if (typeof candidate.biography === "string" && candidate.biography.trim()) {
     max += 15;
     const bio = candidate.biography;
-    const intent = COLLAB_INTENT_RE.test(bio) || EMAIL_RE.test(bio);
+    const intent =
+      COLLAB_INTENT_RE.test(bio) ||
+      EMAIL_RE.test(bio) ||
+      Boolean(candidate.email) ||
+      Boolean(candidate.phone);
     points += intent ? 15 : 2;
     signals.bio_intent = intent;
   }
@@ -324,17 +328,22 @@ function scoreDiscoverCandidate(candidate, opts) {
 }
 
 // Keep-decision, separate from the score so the two can be reasoned about independently.
-// An unknown score is kept: discovery's job is to produce candidates worth checking, and
-// a terse listing is not evidence against an account.
-function keepDiscoverCandidate(candidate, scored, threshold) {
+// Rejects private accounts unconditionally and enforces follower bounds when measured.
+function keepDiscoverCandidate(candidate, scored, threshold, minFollowers, maxFollowers) {
   if (candidate.is_private === true) return false;
-  if (scored.score == null) return true;
-  return scored.score >= threshold;
+  if (candidate.signals && candidate.signals.is_private === true) return false;
+  if (typeof candidate.followers === "number") {
+    const min = typeof minFollowers === "number" ? minFollowers : 1000;
+    const max = typeof maxFollowers === "number" ? maxFollowers : Infinity;
+    if (candidate.followers < min || candidate.followers > max) return false;
+  }
+  if (scored && scored.score == null) return true;
+  return scored && scored.score >= threshold;
 }
 
 const DISCOVER_KEEP_THRESHOLD = 50;
 
-// --------------------------------------------------------------------- india detection
+// --------------------------------------------------------------------- india & contact detection
 //
 // Same null rule as the scorer, for the same reason: this looks for *positive* evidence
 // that an account is Indian and never reads the opposite out of silence. Most listing
@@ -342,32 +351,29 @@ const DISCOVER_KEEP_THRESHOLD = 50;
 // back "unknown" — calling those foreign would throw away most of a run, and calling them
 // Indian would make the list a lie. The verdict is therefore only ever "yes" or "unknown",
 // and the delivery list asks for "yes".
-//
-// Names are deliberately not a signal. Guessing somebody's nationality from their name is
-// unreliable and gets individual people wrong, and this list ends up in someone's outreach
-// — there is a person on the other end of a wrong guess.
 
 // The scripts written in India. Unlike a place name these do not collide with anywhere
 // foreign, so one of them on its own is enough.
 const INDIC_SCRIPT_RE =
   /[ऀ-ॿঀ-৿਀-੿઀-૿଀-୿஀-௿ఀ-౿ಀ-೿ഀ-ൿ]/;
-// The leading + is required. Without it "91" followed by digits matches the middle of far
-// too many ordinary phone numbers.
-const INDIA_PHONE_RE = /\+\s?91[\s-]?\d{5}/;
-const INDIA_WORD_RE = /\b(india|indian|bharat|hindustan|desi)\b/i;
+const INDIA_FLAG_RE = /(?:🇮🇳|[\uD83C][\uDDEE][\uD83C][\uDDF3])/u;
+const INDIA_PHONE_RE = /(?:\+\s?91[\s-]?\d{5}|\b\+?91[\s.-]?[6-9]\d{9}\b)/;
+const INDIA_CONTACT_PHONE_RE =
+  /(?:wa|whatsapp|call|contact|booking|enquiry|enquiries|dm|phone|ph|mob|biz)[\s:.-]*(?:\+?91[\s.-]?)?([6-9]\d{9})\b/i;
+const INDIA_WORD_RE =
+  /\b(india|indian|bharat|hindustan|desi|deshi|haryanvi|punjabi|marathi|bengali|gujarati|pahadi|pahari|bihari|kumaoni|garhwali|jaat|jatt|gujjar|gurjar|rajput|yadav|pandit|sardar|khalsa|hindustani|namaste|pranam)\b/i;
+const INDIA_CULTURE_RE =
+  /\b(ram\s*ram|jai\s*shree\s*ram|jai\s*sita\s*ram|jai\s*bajrang\s*bali|jai\s*mata\s*di|jai\s*bhole|har\s*har\s*mahadev|radhe\s*radhe|hare\s*krishna|jai\s*hind|vande\s*mataram|bharat\s*mata)\b/i;
 const INDIA_MONEY_RE = /(₹|\brs\.?\s*\d|\binr\b)/i;
 
-// Cities and states. A few exist elsewhere too — there is a Hyderabad in Pakistan, Punjab
-// spans the border — so a place match is evidence, not proof. That is exactly how it is
-// used: every signal that fired is written into the candidate row, so a human reading the
-// file can see *why* an account was called Indian and disagree with it.
+// Cities, states, common abbreviations and regions.
 const INDIA_PLACES = [
   "mumbai", "bombay", "navi mumbai", "thane", "delhi", "gurgaon", "gurugram", "noida",
-  "ghaziabad", "faridabad", "bengaluru", "bangalore", "hyderabad", "chennai", "madras",
-  "kolkata", "calcutta", "pune", "ahmedabad", "surat", "jaipur", "lucknow", "kanpur",
-  "nagpur", "indore", "bhopal", "patna", "vadodara", "ludhiana", "agra", "nashik",
-  "rajkot", "varanasi", "srinagar", "amritsar", "jodhpur", "coimbatore", "kochi",
-  "cochin", "thiruvananthapuram", "trivandrum", "mysuru", "mysore", "mangalore",
+  "greater noida", "ghaziabad", "faridabad", "bengaluru", "bangalore", "hyderabad",
+  "chennai", "madras", "kolkata", "calcutta", "pune", "ahmedabad", "surat", "jaipur",
+  "lucknow", "kanpur", "nagpur", "indore", "bhopal", "patna", "vadodara", "ludhiana",
+  "agra", "nashik", "rajkot", "varanasi", "srinagar", "amritsar", "jodhpur", "coimbatore",
+  "kochi", "cochin", "thiruvananthapuram", "trivandrum", "mysuru", "mysore", "mangalore",
   "madurai", "visakhapatnam", "vizag", "vijayawada", "guwahati", "bhubaneswar",
   "dehradun", "chandigarh", "raipur", "ranchi", "jamshedpur", "udaipur", "jalandhar",
   "aurangabad", "shillong", "imphal", "gangtok", "siliguri", "kozhikode", "calicut",
@@ -375,10 +381,16 @@ const INDIA_PLACES = [
   "prayagraj", "bareilly", "aligarh", "kota", "ajmer", "bikaner", "hubli", "belgaum",
   "warangal", "kolhapur", "solapur", "panaji", "pondicherry", "puducherry",
   "maharashtra", "karnataka", "kerala", "tamil nadu", "telangana", "andhra pradesh",
-  "gujarat", "rajasthan", "punjab", "haryana", "bihar", "odisha", "orissa", "assam",
-  "jharkhand", "chhattisgarh", "uttarakhand", "himachal", "uttar pradesh",
+  "andhra", "gujarat", "rajasthan", "punjab", "haryana", "bihar", "odisha", "orissa",
+  "assam", "jharkhand", "chhattisgarh", "uttarakhand", "himachal", "uttar pradesh",
   "madhya pradesh", "west bengal", "goa", "sikkim", "manipur", "meghalaya", "nagaland",
-  "tripura", "mizoram", "arunachal",
+  "tripura", "mizoram", "arunachal", "ncr", "delhi ncr", "dilli", "mohali", "panchkula",
+  "patiala", "bathinda", "rohtak", "hisar", "panipat", "sonipat", "karnal", "kurukshetra",
+  "ambala", "jhajjar", "bhiwani", "rewari", "mathura", "vrindavan", "kashi", "banaras",
+  "ayodhya", "gorakhpur", "jhansi", "alwar", "sikar", "ujjain", "haridwar", "rishikesh",
+  "shimla", "manali", "dharamshala", "jammu", "bhavnagar", "jamnagar", "howrah", "cuttack",
+  "puri", "guntur", "up", "mp", "hr", "pb", "rj", "uk", "hp", "mh", "gj", "dl", "blr",
+  "bom", "del", "hyd"
 ];
 const INDIA_PLACE_RE = new RegExp(
   "\\b(" + INDIA_PLACES.map((place) => place.replace(/ /g, "\\s+")).join("|") + ")\\b",
@@ -387,9 +399,39 @@ const INDIA_PLACE_RE = new RegExp(
 
 // Strong signals stand alone; weak ones need company. A rupee sign or a .in link is a real
 // hint, but neither is rare enough outside India to convict on by itself — whereas a +91
-// number, a Devanagari bio or a city on the business record is not something a non-Indian
-// account picks up by accident.
+// number, a Devanagari bio, or a verified Indian city is strong evidence.
 const INDIA_WEAK_SIGNALS = new Set(["bio_money", "in_domain"]);
+
+function extractCandidateContact(candidate) {
+  const bio = typeof candidate.biography === "string" ? candidate.biography : "";
+
+  let email =
+    typeof candidate.email === "string" && candidate.email
+      ? candidate.email.trim().toLowerCase()
+      : null;
+  if (!email && bio) {
+    const m = bio.match(EMAIL_RE);
+    if (m) email = m[0].toLowerCase();
+  }
+
+  let phone =
+    typeof candidate.phone === "string" && candidate.phone
+      ? candidate.phone.trim()
+      : null;
+  if (!phone && bio) {
+    const contactM = bio.match(INDIA_CONTACT_PHONE_RE);
+    if (contactM && contactM[1]) {
+      phone = contactM[1];
+    } else {
+      const p91M = bio.match(INDIA_PHONE_RE);
+      if (p91M) {
+        phone = p91M[0].replace(/\s+/g, "");
+      }
+    }
+  }
+
+  return { email, phone };
+}
 
 function detectIndiaSignals(candidate) {
   const bio = typeof candidate.biography === "string" ? candidate.biography : "";
@@ -402,8 +444,10 @@ function detectIndiaSignals(candidate) {
     signals.push("phone_country_code");
   }
   if (city && INDIA_PLACE_RE.test(city)) signals.push("city");
-  if (INDIA_PHONE_RE.test(bio)) signals.push("bio_phone");
+  if (INDIA_FLAG_RE.test(bio) || INDIA_FLAG_RE.test(name)) signals.push("flag");
   if (INDIC_SCRIPT_RE.test(bio) || INDIC_SCRIPT_RE.test(name)) signals.push("indic_script");
+  if (INDIA_CULTURE_RE.test(bio) || INDIA_CULTURE_RE.test(name)) signals.push("culture");
+  if (INDIA_CONTACT_PHONE_RE.test(bio) || INDIA_PHONE_RE.test(bio)) signals.push("bio_phone");
   if (INDIA_WORD_RE.test(bio)) signals.push("bio_india");
   if (INDIA_PLACE_RE.test(bio)) signals.push("bio_place");
   if (INDIA_MONEY_RE.test(bio)) signals.push("bio_money");
@@ -417,10 +461,9 @@ function detectIndiaSignals(candidate) {
     india_signals: signals,
   };
 }
-// Request budget for the enrichment pass. It is one request per candidate, so an
-// unbounded pass on a 5000-candidate run is exactly the storm this project refuses to
-// make. Anything past the cap is reported, not silently dropped.
-const DISCOVER_MAX_ENRICH = 400;
+
+// Request budget for the enrichment pass. Dynamically scales with the requested max_candidates.
+const DISCOVER_DEFAULT_MAX_ENRICH = 500;
 
 // /info/ is strictly richer than a listing record, but a null in it still means "this
 // source did not say" — so a field is only overwritten when the new answer actually
@@ -431,13 +474,15 @@ function mergeDiscoverCandidate(existing, incoming) {
   const num = (key) => (typeof incoming[key] === "number" ? incoming[key] : existing[key]);
   const bool = (key) => (typeof incoming[key] === "boolean" ? incoming[key] : existing[key]);
 
-  return {
+  const merged = {
     ...existing,
     user_id: existing.user_id || incoming.user_id || null,
     full_name: pick("full_name"),
     biography: pick("biography"),
     category: pick("category"),
     external_url: pick("external_url"),
+    email: pick("email"),
+    phone: pick("phone"),
     // Only /info/ ever supplies these, so on a merge they are almost always the new half.
     city_name: pick("city_name"),
     phone_country_code: pick("phone_country_code"),
@@ -448,6 +493,11 @@ function mergeDiscoverCandidate(existing, incoming) {
     is_verified: bool("is_verified"),
     is_business: bool("is_business"),
   };
+
+  const contacts = extractCandidateContact(merged);
+  merged.email = contacts.email;
+  merged.phone = contacts.phone;
+  return merged;
 }
 
 // Which candidates earn a detail request: kept ones only, best-scored first, and only
@@ -471,7 +521,11 @@ function buildDiscoverEnrichQueue(state) {
     }
     return (b.score == null ? -1 : b.score) - (a.score == null ? -1 : a.score);
   });
-  const slice = rows.slice(0, DISCOVER_MAX_ENRICH);
+  const enrichCap = Math.min(
+    Math.max(state.maxCandidates || DISCOVER_DEFAULT_MAX_ENRICH, 500),
+    DISCOVER_CANDIDATE_HARD_CAP
+  );
+  const slice = rows.slice(0, enrichCap);
   return {
     tasks: slice.map((row) => ({
       kind: "enrich",
@@ -601,12 +655,25 @@ function buildDiscoverJson(state, options) {
     return (b.followers || 0) - (a.followers || 0);
   });
 
+  // Filter to only clean, qualified, non-private, in-band candidates
+  const min = typeof state.minFollowers === "number" ? state.minFollowers : 1000;
+  const max = typeof state.maxFollowers === "number" ? state.maxFollowers : Infinity;
+  const qualifiedRows = rows.filter(
+    (row) =>
+      row &&
+      row.keep &&
+      !row.is_private &&
+      (row.followers == null || (row.followers >= min && row.followers <= max)) &&
+      (!state.indiaOnly || row.india === "yes")
+  );
+
+  const cleanHandles = qualifiedRows.map((row) => row.handle);
+
   return JSON.stringify(
     {
       generated_at: new Date().toISOString(),
       complete,
       incomplete_reason: complete ? null : (options && options.reason) || "incomplete",
-      // Named so a file read months later still explains how it was produced.
       seeds: state.seeds,
       settings: {
         max_depth: state.maxDepth,
@@ -621,29 +688,19 @@ function buildDiscoverJson(state, options) {
       },
       runaway_guard_hit: state.capped,
       sources_disabled: state.deadSources,
-      totals: state.totals,
-      candidates: rows,
-      // The one line most users actually want: paste straight into the Instagram profiles
-      // tab.
-      kept_handles: rows.filter((row) => row.keep).map((row) => row.handle),
-      // Stricter than kept_handles: kept AND measured AND inside the band. kept_handles is
-      // generous by design and therefore carries accounts nobody could measure; this is the
-      // list that can honestly be described as "inside the follower band you set". It comes
-      // back short — or empty — when the detail pass did not run, and that is the true
-      // answer rather than a fault: without the detail pass almost nothing has a follower
-      // count to check.
-      in_band_handles: inBandDiscoverRows(rows, state.minFollowers, state.maxFollowers).map(
-        (row) => row.handle
-      ),
-      // Narrowest of the three, and the one an overnight India run is actually for: kept,
-      // measured, inside the band, and carrying positive evidence of being Indian. Each
-      // row's own `india_signals` says which evidence, so this list can be argued with
-      // rather than taken on faith.
-      india_in_band_handles: indiaInBandDiscoverRows(
-        rows,
-        state.minFollowers,
-        state.maxFollowers
-      ).map((row) => row.handle),
+      totals: {
+        ...state.totals,
+        candidates: qualifiedRows.length,
+        kept: qualifiedRows.length,
+        inBand: qualifiedRows.length,
+        indiaInBand: qualifiedRows.filter((r) => r.india === "yes").length,
+      },
+      candidates: qualifiedRows,
+      handles: cleanHandles,
+      // Compatibility keys mapped to the same single verified list
+      kept_handles: cleanHandles,
+      in_band_handles: cleanHandles,
+      india_in_band_handles: cleanHandles,
     },
     null,
     2
@@ -1146,7 +1203,13 @@ async function handleDiscoverTaskDone(msg) {
         signals: scored.signals,
         india: located.india,
         india_signals: located.india_signals,
-        keep: keepDiscoverCandidate(merged, scored, DISCOVER_KEEP_THRESHOLD),
+        keep: keepDiscoverCandidate(
+          merged,
+          scored,
+          DISCOVER_KEEP_THRESHOLD,
+          state.minFollowers,
+          state.maxFollowers
+        ),
         enriched: true,
       };
       note =
@@ -1197,8 +1260,16 @@ async function handleDiscoverTaskDone(msg) {
     }
 
     seen.add(handle);
-    const scored = scoreDiscoverCandidate(raw, scoreOpts);
-    const keep = keepDiscoverCandidate(raw, scored, DISCOVER_KEEP_THRESHOLD);
+    if (raw && raw.is_private === true) continue;
+    const contacts = extractCandidateContact(raw);
+    const scored = scoreDiscoverCandidate({ ...raw, ...contacts }, scoreOpts);
+    const keep = keepDiscoverCandidate(
+      raw,
+      scored,
+      DISCOVER_KEEP_THRESHOLD,
+      state.minFollowers,
+      state.maxFollowers
+    );
     // Usually "unknown" at this point — a chaining record rarely carries a bio, let alone a
     // city. It is computed anyway because a search or hashtag record sometimes does, and
     // the enrich pass re-runs it either way.
@@ -1213,6 +1284,8 @@ async function handleDiscoverTaskDone(msg) {
       user_id: raw.user_id || null,
       full_name: raw.full_name || null,
       biography: typeof raw.biography === "string" ? raw.biography : null,
+      email: contacts.email,
+      phone: contacts.phone,
       followers: num(raw.followers),
       following: num(raw.following),
       posts_count: num(raw.posts_count),

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Insta Handle Finder (Google Search)",
-  "version": "1.3.0",
-  "description": "Brand list to contact sheet (public website/LinkedIn/Apollo signals), campaign brief to creator folder in one run, multi-city site:instagram.com Google search for public handles, Instagram creator discovery via Instagram's own suggestion graph, plus full Instagram profile+posts, YouTube channel+videos and LinkedIn search-post exporters. Pauses on CAPTCHA/rate-limit; never evades.",
+  "name": "Insta Handle & Creator Exporter",
+  "version": "2.0.0",
+  "description": "Instagram profiles & post scraper with date filter & early cutoff, IG creator discovery via suggestion graph, YouTube exporter, and campaign brief parser. Fast, safe, and rate-limit aware.",
   "permissions": [
     "tabs",
     "scripting",
@@ -15,24 +15,19 @@
     "unlimitedStorage"
   ],
   "host_permissions": [
-    "https://www.google.com/*",
     "https://www.instagram.com/*",
     "https://instagram.com/*",
     "https://i.instagram.com/*",
     "https://www.youtube.com/*",
     "https://youtube.com/*",
-    "https://m.youtube.com/*",
-    "https://www.linkedin.com/*",
-    "https://linkedin.com/*",
-    "https://www.apollo.io/*",
-    "https://apollo.io/*"
+    "https://m.youtube.com/*"
   ],
   "optional_host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Insta Handle Finder",
+    "default_title": "Insta Exporter",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
